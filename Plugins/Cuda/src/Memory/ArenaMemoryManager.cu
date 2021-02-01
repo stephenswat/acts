@@ -7,7 +7,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // CUDA plugin include(s).
-#include "Acts/Plugins/Cuda/Memory/MemoryManager.hpp"
+#include "Acts/Plugins/Cuda/Memory/ArenaMemoryManager.hpp"
 
 #include "../Utilities/ErrorCheck.cuh"
 
@@ -21,7 +21,7 @@
 namespace Acts {
 namespace Cuda {
 
-MemoryManager::~MemoryManager() {
+ArenaMemoryManager::~ArenaMemoryManager() {
   // Free all the allocated memory.
   for (DeviceMemory& mem : m_memory) {
     if (mem.m_ptr == nullptr) {
@@ -31,12 +31,12 @@ MemoryManager::~MemoryManager() {
   }
 }
 
-MemoryManager& MemoryManager::instance() {
-  static MemoryManager mm;
+ArenaMemoryManager& ArenaMemoryManager::instance() {
+  static ArenaMemoryManager mm;
   return mm;
 }
 
-void MemoryManager::setMemorySize(std::size_t sizeInBytes, int device) {
+void ArenaMemoryManager::setMemorySize(std::size_t sizeInBytes, int device) {
   // If the user didn't ask for a specific device, use the one currently used by
   // CUDA.
   if (device == -1) {
@@ -66,7 +66,7 @@ void MemoryManager::setMemorySize(std::size_t sizeInBytes, int device) {
   return;
 }
 
-std::size_t MemoryManager::availableMemory(int device) const {
+std::size_t ArenaMemoryManager::availableMemory(int device) const {
   // If the user didn't ask for a specific device, use the one currently used by
   // CUDA.
   if (device == -1) {
@@ -83,7 +83,7 @@ std::size_t MemoryManager::availableMemory(int device) const {
   return (mem.m_size - (mem.m_nextAllocation - mem.m_ptr));
 }
 
-void* MemoryManager::allocate(std::size_t sizeInBytes, int device) {
+void* ArenaMemoryManager::allocate(std::size_t sizeInBytes, int device) {
   // If the user didn't ask for a specific device, use the one currently used by
   // CUDA.
   if (device == -1) {
@@ -116,7 +116,7 @@ void* MemoryManager::allocate(std::size_t sizeInBytes, int device) {
   return result;
 }
 
-void MemoryManager::reset(int device) {
+void ArenaMemoryManager::reset(int device) {
   // If the user didn't ask for a specific device, use the one currently used by
   // CUDA.
   if (device == -1) {
@@ -136,7 +136,7 @@ void MemoryManager::reset(int device) {
   return;
 }
 
-MemoryManager::MemoryManager() {
+ArenaMemoryManager::ArenaMemoryManager() {
   // Allocate 1500 MBs of memory as a start on the default device.
   setMemorySize(1500 * 1024l * 1024l);
 }
