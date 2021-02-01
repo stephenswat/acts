@@ -24,19 +24,19 @@ add_library(
   include/Acts/Plugins/Cuda/Seeding2/SeedFinder.hpp
   include/Acts/Plugins/Cuda/Seeding2/SeedFinder.ipp
   include/Acts/Plugins/Cuda/Seeding2/TripletFilterConfig.hpp
+  include/Acts/Plugins/Cuda/Memory/MemoryManager.hpp
   include/Acts/Plugins/Cuda/Utilities/Arrays.hpp
   include/Acts/Plugins/Cuda/Utilities/Info.hpp
-  include/Acts/Plugins/Cuda/Utilities/MemoryManager.hpp
   include/Acts/Plugins/Cuda/Utilities/StreamWrapper.hpp
   src/Seeding2/CountDublets.cu
   src/Seeding2/FindDublets.cu
   src/Seeding2/FindTriplets.cu
+  src/Memory/MemoryManager.cu
   src/Utilities/Arrays.cu
   src/Utilities/ErrorCheck.cuh
   src/Utilities/ErrorCheck.cu
   src/Utilities/Info.cu
   src/Utilities/MatrixMacros.hpp
-  src/Utilities/MemoryManager.cu
   src/Utilities/StreamHandlers.cuh
   src/Utilities/StreamWrapper.cu
 )

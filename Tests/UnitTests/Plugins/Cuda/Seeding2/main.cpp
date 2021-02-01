@@ -16,7 +16,7 @@
 // CUDA plugin include(s).
 #include "Acts/Plugins/Cuda/Seeding2/SeedFinder.hpp"
 #include "Acts/Plugins/Cuda/Utilities/Info.hpp"
-#include "Acts/Plugins/Cuda/Utilities/MemoryManager.hpp"
+#include "Acts/Plugins/Cuda/Memory/MemoryManager.hpp"
 
 // Acts include(s).
 #include "Acts/Seeding/BinFinder.hpp"

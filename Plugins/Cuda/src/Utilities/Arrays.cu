@@ -9,7 +9,7 @@
 // CUDA plugin include(s).
 #include "Acts/Plugins/Cuda/Seeding2/Details/Types.hpp"
 #include "Acts/Plugins/Cuda/Utilities/Arrays.hpp"
-#include "Acts/Plugins/Cuda/Utilities/MemoryManager.hpp"
+#include "Acts/Plugins/Cuda/Memory/MemoryManager.hpp"
 
 #include "ErrorCheck.cuh"
 #include "StreamHandlers.cuh"

@@ -7,9 +7,9 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // CUDA plugin include(s).
-#include "Acts/Plugins/Cuda/Utilities/MemoryManager.hpp"
+#include "Acts/Plugins/Cuda/Memory/MemoryManager.hpp"
 
-#include "ErrorCheck.cuh"
+#include "../Utilities/ErrorCheck.cuh"
 
 // CUDA include(s).
 #include <cuda_runtime.h>
