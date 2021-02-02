@@ -27,6 +27,7 @@ add_library(
   include/Acts/Plugins/Cuda/Memory/ArenaMemoryManager.hpp
   include/Acts/Plugins/Cuda/Memory/CubMemoryManager.hpp
   include/Acts/Plugins/Cuda/Memory/MemoryManager.hpp
+  include/Acts/Plugins/Cuda/Memory/NaiveMemoryManager.hpp
   include/Acts/Plugins/Cuda/Utilities/Arrays.hpp
   include/Acts/Plugins/Cuda/Utilities/Info.hpp
   include/Acts/Plugins/Cuda/Utilities/StreamWrapper.hpp
@@ -35,6 +36,7 @@ add_library(
   src/Seeding2/FindTriplets.cu
   src/Memory/ArenaMemoryManager.cu
   src/Memory/CubMemoryManager.cu
+  src/Memory/NaiveMemoryManager.cu
   src/Utilities/Arrays.cu
   src/Utilities/ErrorCheck.cuh
   src/Utilities/ErrorCheck.cu
