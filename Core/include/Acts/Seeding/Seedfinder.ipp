@@ -61,6 +61,18 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
       if (deltaR < m_config.deltaRMin) {
         continue;
       }
+      float rMax = ((m_config.deltaRMax + rB) / rB) * (bottomSP->z() - m_config.collisionRegionMin) + m_config.collisionRegionMin;
+      float rMin = m_config.collisionRegionMax - ((m_config.deltaRMax + rB) / rB) * (m_config.collisionRegionMax - bottomSP->z());
+
+      if (zM > rMax) {
+        // //std::cout << "BDisc 3!" << std::endl;
+        continue;
+      }
+
+      if (zM < rMin) {
+        // //std::cout << "BDisc 4!" << std::endl;
+        continue;
+      }
       // ratio Z/R (forward angle) of space point duplet
       float cotTheta = (zM - bottomSP->z()) / deltaR;
       if (std::fabs(cotTheta) > m_config.cotThetaMax) {
@@ -86,21 +98,41 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
       float deltaR = rT - rM;
       // this condition is the opposite of the condition for bottom SP
       if (deltaR < m_config.deltaRMin) {
+        //std::cout << "TDisc 1!" << std::endl;
         continue;
       }
       if (deltaR > m_config.deltaRMax) {
+        //std::cout << "TDisc 2!" << std::endl;
+        continue;
+      }
+
+      float rMax = ((m_config.deltaRMax + rM) / rM) * (zM - m_config.collisionRegionMin) + m_config.collisionRegionMin;
+      float rMin = m_config.collisionRegionMax - ((m_config.deltaRMax + rM) / rM) * (m_config.collisionRegionMax - zM);
+
+
+      if (zM > m_config.collisionRegionMin && topSP->z() > rMax) {
+        //std::cout << "TDisc 3!" << std::endl;
+        continue;
+      }
+
+      if (zM < m_config.collisionRegionMax && topSP->z() < rMin) {
+        //std::cout << "TDisc 4!" << std::endl;
         continue;
       }
 
       float cotTheta = (topSP->z() - zM) / deltaR;
       if (std::fabs(cotTheta) > m_config.cotThetaMax) {
+        //std::cout << "TDisc 5!" << std::endl;
         continue;
       }
       float zOrigin = zM - rM * cotTheta;
       if (zOrigin < m_config.collisionRegionMin ||
           zOrigin > m_config.collisionRegionMax) {
+          //std::cout << "TDisc 6!" << std::endl;
         continue;
       }
+
+      //std::cout << "TPass!" << std::endl;
       compatTopSP.push_back(topSP);
     }
     if (compatTopSP.empty()) {
@@ -156,6 +188,7 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
       impactParameters.clear();
       for (size_t t = 0; t < numTopSP; t++) {
         auto lt = linCircleTop[t];
+        bool kill = false;
 
         // add errors of spB-spM and spM-spT pairs and add the correlation term
         // for errors on spM
@@ -181,14 +214,18 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
           // (scattering is always positive)
 
           if (dCotThetaMinusError2 > scatteringInRegion2) {
-            continue;
+            //std::cout << "SDisc 1!" << std::endl;
+            kill = true;
+            // continue;
           }
         }
 
         // protects against division by 0
         float dU = lt.U - Ub;
         if (dU == 0.) {
-          continue;
+          //std::cout << "SDisc 2!" << std::endl;
+          kill = true;
+          // continue;
         }
         // A and B are evaluated as a function of the circumference parameters
         // x_0 and y_0
@@ -198,8 +235,10 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
         float B2 = B * B;
         // sqrt(S2)/B = 2 * helixradius
         // calculated radius must not be smaller than minimum radius
-        if (S2 < B2 * m_config.minHelixDiameter2) {
-          continue;
+        if (S2 / B2 < m_config.minHelixDiameter2) {
+          //std::cout << "SDisc 3!" << std::endl;
+          kill = true;
+          // continue;
         }
         // 1/helixradius: (B/sqrt(S2))*2 (we leave everything squared)
         float iHelixDiameter2 = B2 / S2;
@@ -219,20 +258,45 @@ Seedfinder<external_spacepoint_t, platform_t>::createSeedsForGroup(
         if ((deltaCotTheta2 - error2 > 0) &&
             (dCotThetaMinusError2 >
              p2scatter * m_config.sigmaScattering * m_config.sigmaScattering)) {
-          continue;
+               //std::cout << "SDisc 4!" << std::endl;
+               kill = true;
+          // continue;
         }
         // A and B allow calculation of impact params in U/V plane with linear
         // function
         // (in contrast to having to solve a quadratic function in x/y plane)
-        float Im = std::abs((A - B * rM) * rM);
+        float Im = std::abs(A - B * rM) * rM;
 
-        if (Im <= m_config.impactMax) {
-          topSpVec.push_back(compatTopSP[t]);
-          // inverse diameter is signed depending if the curvature is
-          // positive/negative in phi
-          curvatures.push_back(B / std::sqrt(S2));
-          impactParameters.push_back(Im);
+        float f1 = Vb * rM;
+        float f2 = A * (Ub * rM + 1.0);
+
+        float z1 = (m_config.impactMax / rM + f1) / (Ub * rM + 1.0);
+        float z2 = (-m_config.impactMax / rM + f1) / (Ub * rM + 1.0);
+
+        if (f1 <= f2) {
+          if (lt.V < lt.U * z1 - Ub * z1 + Vb) {
+            //std::cout << "SDisc 5!" << std::endl;
+            kill = true;
+            // continue;
+          }
+        } else {
+          if (lt.V > lt.U * z2 - Ub * z2 + Vb) {
+            //std::cout << "SDisc 5!" << std::endl;
+            kill = true;
+            // continue;
+          }
         }
+
+        if (kill) {
+          continue;
+        }
+
+        //std::cout << "SPass!" << std::endl;
+        topSpVec.push_back(compatTopSP[t]);
+        // inverse diameter is signed depending if the curvature is
+        // positive/negative in phi
+        curvatures.push_back(B / std::sqrt(S2));
+        impactParameters.push_back(Im);
       }
       if (!topSpVec.empty()) {
         std::vector<std::pair<
