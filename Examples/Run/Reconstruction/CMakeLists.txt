@@ -82,6 +82,17 @@ target_link_libraries(
     ActsExamplesDetectorTGeo
 )
 
+# Seeding (orthogonal) for Generic detector
+add_executable(
+  ActsExampleSeedingOrthogonalGeneric
+  GenericSeedingOrthogonalExample.cpp)
+target_link_libraries(
+  ActsExampleSeedingOrthogonalGeneric
+  PRIVATE
+    ActsExamplesRecTracksCommon
+    ActsExamplesDetectorGeneric
+)
+
 # =================================================
 # Convert measurements to spacepoints and write sp to csv
 add_executable(

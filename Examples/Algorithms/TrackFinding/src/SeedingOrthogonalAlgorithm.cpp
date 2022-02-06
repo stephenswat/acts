@@ -285,8 +285,8 @@ void ActsExamples::SeedingOrthogonalAlgorithm::helper(
   // ...for middle-top
   std::vector<Acts::LinCircle> linCircleTop;
   linCircleTop.reserve(top.size());
-  transformCoordinates(bottom, middle, true, linCircleBottom);
-  transformCoordinates(top, middle, false, linCircleTop);
+  transformCoordinates(bottom, middle, true, false, linCircleBottom);
+  transformCoordinates(top, middle, false, false, linCircleTop);
 
   std::vector<double> tanLM;
   std::vector<double> tanMT;
