@@ -158,7 +158,7 @@ struct GenericDefaultExtension {
     /// missing Lambda part) and only exists for dFdu' in dlambda/dlambda.
 
     auto& sd = state.stepping.stepData;
-    auto dir = stepper.direction(state.stepping);
+    Vector3 dir = stepper.direction(state.stepping);
     Scalar qop =
         stepper.charge(state.stepping) / stepper.momentum(state.stepping);
 
@@ -166,15 +166,15 @@ struct GenericDefaultExtension {
 
     double half_h = h * 0.5;
 
-    ActsMatrix<3, 3> dk1dT = ActsMatrix<3, 3>::Zero();
+    ActsMatrix<3, 3> dk1dT;
     ActsMatrix<3, 3> dk2dT = ActsMatrix<3, 3>::Identity();
     ActsMatrix<3, 3> dk3dT = ActsMatrix<3, 3>::Identity();
     ActsMatrix<3, 3> dk4dT = ActsMatrix<3, 3>::Identity();
 
-    Vector3 dk1dL = Vector3::Zero();
-    Vector3 dk2dL = Vector3::Zero();
-    Vector3 dk3dL = Vector3::Zero();
-    Vector3 dk4dL = Vector3::Zero();
+    Vector3 dk1dL;
+    Vector3 dk2dL;
+    Vector3 dk3dL;
+    Vector3 dk4dL;
 
     // For the case without energy loss
     dk1dL = dir.cross(sd.B_first);
@@ -185,6 +185,7 @@ struct GenericDefaultExtension {
     dk4dL =
         (dir + h * sd.k3).cross(sd.B_last) + qop * h * dk3dL.cross(sd.B_last);
 
+    dk1dT.setZero();
     dk1dT(0, 1) = sd.B_first.z();
     dk1dT(0, 2) = -sd.B_first.y();
     dk1dT(1, 0) = -sd.B_first.z();
@@ -204,11 +205,14 @@ struct GenericDefaultExtension {
 
     // This sets the reference to the sub matrices
     // dFdx is already initialised as (3x3) idendity
-    D.block<3, 3>(0, 4) = (h * h) / 6. * (dk1dT + dk2dT + dk3dT);
-    D.block<3, 1>(0, 7) = (h * h) / 6. * (dk1dL + dk2dL + dk3dL);
 
-    D.block<3, 3>(4, 4) = h / 6. * (dk1dT + 2. * (dk2dT + dk3dT) + dk4dT);
-    D.block<3, 1>(4, 7) = h / 6. * (dk1dL + 2. * (dk2dL + dk3dL) + dk4dL);
+    Scalar ho6 = h / 6.;
+
+    D.block<3, 3>(0, 4) = h * ho6 * (dk1dT + dk2dT + dk3dT);
+    D.block<3, 1>(0, 7) = h * ho6 * (dk1dL + dk2dL + dk3dL);
+
+    D.block<3, 3>(4, 4) = ho6 * (dk1dT + 2. * (dk2dT + dk3dT) + dk4dT);
+    D.block<3, 1>(4, 7) = ho6 * (dk1dL + 2. * (dk2dL + dk3dL) + dk4dL);
 
     D(3, 7) =
         h * state.options.mass * state.options.mass *

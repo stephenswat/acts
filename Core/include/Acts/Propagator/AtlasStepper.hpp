@@ -1158,10 +1158,7 @@ class AtlasStepper {
     bool Helix = false;
     // if (std::abs(S) < m_cfg.helixStep) Helix = true;
 
-    std::chrono::high_resolution_clock::time_point t200 = std::chrono::high_resolution_clock::now();
-
     while (h != 0.) {
-      std::chrono::high_resolution_clock::time_point t300 = std::chrono::high_resolution_clock::now();
       // PS2 is h/(2*momentum) in EigenStepper
       double S3 = (1. / 3.) * h, S4 = .25 * h, PS2 = Pi * h;
 
@@ -1385,9 +1382,7 @@ class AtlasStepper {
       std::cout << "ATLASSTEPPER," <<
         __LINE__ << "," <<
         std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t100).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t200 - t100).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t300 - t200).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t400 - t300).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t400 - t100).count() << "," <<
         std::chrono::duration_cast<std::chrono::nanoseconds>(t500 - t400).count() << "," <<
         std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t500).count() << std::endl;
 

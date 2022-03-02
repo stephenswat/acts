@@ -115,7 +115,7 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
   using namespace UnitLiterals;
   size_t nStepTrials = 0;
 
-  std::chrono::high_resolution_clock::time_point t100 = std::chrono::high_resolution_clock::now();
+  // std::chrono::high_resolution_clock::time_point t100 = std::chrono::high_resolution_clock::now();
 
   // Runge-Kutta integrator state
   auto& sd = state.stepping.stepData;
@@ -124,8 +124,6 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
 
   auto pos = position(state.stepping);
   auto dir = direction(state.stepping);
-
-  std::chrono::high_resolution_clock::time_point t200 = std::chrono::high_resolution_clock::now();
 
   // First Runge-Kutta point (at current position)
   auto fieldRes = getField(state.stepping, pos);
@@ -137,8 +135,6 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
       !state.stepping.extension.k1(state, *this, sd.k1, sd.B_first, sd.kQoP)) {
     return 0.;
   }
-
-  std::chrono::high_resolution_clock::time_point t300 = std::chrono::high_resolution_clock::now();
 
   // The following functor starts to perform a Runge-Kutta step of a certain
   // size, going up to the point where it can return an estimate of the local
@@ -193,7 +189,7 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
     return success(error_estimate <= state.options.tolerance);
   };
 
-  std::chrono::high_resolution_clock::time_point t400 = std::chrono::high_resolution_clock::now();
+  // std::chrono::high_resolution_clock::time_point t400 = std::chrono::high_resolution_clock::now();
 
   double stepSizeScaling = 1.;
   // Select and adjust the appropriate Runge-Kutta step size as given
@@ -201,11 +197,7 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
   std::size_t rk_time = 0;
 
   while (true) {
-    std::chrono::high_resolution_clock::time_point t1 = std::chrono::high_resolution_clock::now();
     auto res = tryRungeKuttaStep(state.stepping.stepSize);
-    std::chrono::high_resolution_clock::time_point t2 = std::chrono::high_resolution_clock::now();
-
-    rk_time += std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
 
     if (!res.ok()) {
       return res.error();
@@ -239,7 +231,7 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
     nStepTrials++;
   }
 
-  std::chrono::high_resolution_clock::time_point t500 = std::chrono::high_resolution_clock::now();
+  // std::chrono::high_resolution_clock::time_point t500 = std::chrono::high_resolution_clock::now();
 
   // use the adjusted step size
   const double h = state.stepping.stepSize;
@@ -252,15 +244,16 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
       return EigenStepperError::StepInvalid;
     }
 
-    // for moment, only update the transport part
-    state.stepping.jacTransport = D * state.stepping.jacTransport;
+    state.stepping.jacTransport.template topRightCorner<4, 4>().noalias() += D.topRightCorner<4, 4>() * state.stepping.jacTransport.template bottomRightCorner<4, 4>();
+    state.stepping.jacTransport.template bottomRightCorner<4, 4>() = D.bottomRightCorner<4, 4>() * state.stepping.jacTransport.template bottomRightCorner<4, 4>();
+
   } else {
     if (!state.stepping.extension.finalize(state, *this, h)) {
       return EigenStepperError::StepInvalid;
     }
   }
 
-  std::chrono::high_resolution_clock::time_point t600 = std::chrono::high_resolution_clock::now();
+  // std::chrono::high_resolution_clock::time_point t600 = std::chrono::high_resolution_clock::now();
 
   // Update the track parameters according to the equations of motion
   state.stepping.pars.template segment<3>(eFreePos0) +=
@@ -286,17 +279,14 @@ Acts::Result<double> Acts::EigenStepper<E, A>::step(
             4.0f);
   }
 
-  std::chrono::high_resolution_clock::time_point t700 = std::chrono::high_resolution_clock::now();
+  // std::chrono::high_resolution_clock::time_point t700 = std::chrono::high_resolution_clock::now();
 
-  std::cout << "EIGENSTEPPER," <<
-    __LINE__ << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t700 - t100).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t200 - t100).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t300 - t200).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t400 - t300).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t500 - t400).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t500).count() << "," <<
-    std::chrono::duration_cast<std::chrono::nanoseconds>(t700 - t600).count() << std::endl;
+  // std::cout << "EIGENSTEPPER," <<
+  //   std::chrono::duration_cast<std::chrono::nanoseconds>(t700 - t100).count() << "," <<
+  //   std::chrono::duration_cast<std::chrono::nanoseconds>(t400 - t100).count() << "," <<
+  //   std::chrono::duration_cast<std::chrono::nanoseconds>(t500 - t400).count() << "," <<
+  //   std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t500).count() << "," <<
+  //   std::chrono::duration_cast<std::chrono::nanoseconds>(t700 - t600).count() << std::endl;
   return h;
 }
 

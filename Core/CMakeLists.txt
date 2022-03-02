@@ -37,6 +37,12 @@ if(ACTS_LOG_FAILURE_THRESHOLD)
     PUBLIC -DACTS_LOG_FAILURE_THRESHOLD=${ACTS_LOG_FAILURE_THRESHOLD})
 endif()
 
+target_compile_options(
+  ActsCore
+  PUBLIC
+  -save-temps
+)
+
 install(
   TARGETS ActsCore
   EXPORT ActsCoreTargets
