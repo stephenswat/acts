@@ -159,19 +159,12 @@ struct GenericDefaultExtension {
 
     auto& sd = state.stepping.stepData;
     auto dir = stepper.direction(state.stepping);
-    auto qop =
+    Scalar qop =
         stepper.charge(state.stepping) / stepper.momentum(state.stepping);
 
     D = FreeMatrix::Identity();
 
     double half_h = h * 0.5;
-    // This sets the reference to the sub matrices
-    // dFdx is already initialised as (3x3) idendity
-    auto dFdT = D.block<3, 3>(0, 4);
-    auto dFdL = D.block<3, 1>(0, 7);
-    // dGdx is already initialised as (3x3) zero
-    auto dGdT = D.block<3, 3>(4, 4);
-    auto dGdL = D.block<3, 1>(4, 7);
 
     ActsMatrix<3, 3> dk1dT = ActsMatrix<3, 3>::Zero();
     ActsMatrix<3, 3> dk2dT = ActsMatrix<3, 3>::Identity();
@@ -209,15 +202,13 @@ struct GenericDefaultExtension {
     dk4dT += h * dk3dT;
     dk4dT = qop * VectorHelpers::cross(dk4dT, sd.B_last);
 
-    dFdT.setIdentity();
-    dFdT += h / 6. * (dk1dT + dk2dT + dk3dT);
-    dFdT *= h;
+    // This sets the reference to the sub matrices
+    // dFdx is already initialised as (3x3) idendity
+    D.block<3, 3>(0, 4) = (h * h) / 6. * (dk1dT + dk2dT + dk3dT);
+    D.block<3, 1>(0, 7) = (h * h) / 6. * (dk1dL + dk2dL + dk3dL);
 
-    dFdL = (h * h) / 6. * (dk1dL + dk2dL + dk3dL);
-
-    dGdT += h / 6. * (dk1dT + 2. * (dk2dT + dk3dT) + dk4dT);
-
-    dGdL = h / 6. * (dk1dL + 2. * (dk2dL + dk3dL) + dk4dL);
+    D.block<3, 3>(4, 4) = h / 6. * (dk1dT + 2. * (dk2dT + dk3dT) + dk4dT);
+    D.block<3, 1>(4, 7) = h / 6. * (dk1dL + 2. * (dk2dL + dk3dL) + dk4dL);
 
     D(3, 7) =
         h * state.options.mass * state.options.mass *
