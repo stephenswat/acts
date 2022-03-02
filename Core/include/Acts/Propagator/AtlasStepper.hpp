@@ -26,8 +26,6 @@
 
 #include <cmath>
 #include <functional>
-#include <iostream>
-#include <chrono>
 
 // This is based original stepper code from the ATLAS RungeKuttePropagagor
 namespace Acts {
@@ -1128,8 +1126,6 @@ class AtlasStepper {
   /// @param state is the provided stepper state (caller keeps thread locality)
   template <typename propagator_state_t>
   Result<double> step(propagator_state_t& state) const {
-    std::chrono::high_resolution_clock::time_point t100 = std::chrono::high_resolution_clock::now();
-
     // we use h for keeping the nominclature with the original atlas code
     auto& h = state.stepping.stepSize;
     bool Jac = state.stepping.useJacobian;
@@ -1193,8 +1189,6 @@ class AtlasStepper {
       } else {
         f = f0;
       }
-
-      std::chrono::high_resolution_clock::time_point t400 = std::chrono::high_resolution_clock::now();
 
       // H1 is (h/(2*momentum) * sd.B_middle) in EigenStepper
       double H1[3] = {f[0] * PS2, f[1] * PS2, f[2] * PS2};
@@ -1278,8 +1272,6 @@ class AtlasStepper {
       state.stepping.pVector[59] = dtds;
       state.stepping.field = f;
       state.stepping.newfield = false;
-
-      std::chrono::high_resolution_clock::time_point t500 = std::chrono::high_resolution_clock::now();
 
       if (Jac) {
         double dtdl = h * state.options.mass * state.options.mass *
@@ -1376,23 +1368,11 @@ class AtlasStepper {
       }
 
       state.stepping.pathAccumulated += h;
-
-      std::chrono::high_resolution_clock::time_point t600 = std::chrono::high_resolution_clock::now();
-
-      std::cout << "ATLASSTEPPER," <<
-        __LINE__ << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t100).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t400 - t100).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t500 - t400).count() << "," <<
-        std::chrono::duration_cast<std::chrono::nanoseconds>(t600 - t500).count() << std::endl;
-
-
       return h;
     }
 
     // that exit path should actually not happen
     state.stepping.pathAccumulated += h;
-
     return h;
   }
 
