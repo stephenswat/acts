@@ -12,6 +12,7 @@ template <typename S, typename N>
 template <typename result_t, typename propagator_state_t>
 auto Acts::Propagator<S, N>::propagate_impl(propagator_state_t& state) const
     -> Result<result_t> {
+  std::chrono::high_resolution_clock::time_point t100 = std::chrono::high_resolution_clock::now();
   result_t result;
 
   const auto& logger = state.options.logger;
@@ -29,6 +30,9 @@ auto Acts::Propagator<S, N>::propagate_impl(propagator_state_t& state) const
   // start at true, if we don't begin the stepping loop we're fine.
   bool terminatedNormally = true;
 
+  std::chrono::high_resolution_clock::time_point t200 = std::chrono::high_resolution_clock::now();
+  std::chrono::high_resolution_clock::time_point t250;
+
   // Pre-Stepping: abort condition check
   if (!state.options.abortList(result, state, m_stepper)) {
     // Pre-Stepping: target setting
@@ -38,8 +42,11 @@ auto Acts::Propagator<S, N>::propagate_impl(propagator_state_t& state) const
 
     terminatedNormally = false;  // priming error condition
 
+    t250 = std::chrono::high_resolution_clock::now();
+
     // Propagation loop : stepping
     for (; result.steps < state.options.maxSteps; ++result.steps) {
+      std::chrono::high_resolution_clock::time_point t251 = std::chrono::high_resolution_clock::now();
       // Perform a propagation step - it takes the propagation state
       Result<double> res = m_stepper.step(state);
       if (res.ok()) {
@@ -55,17 +62,32 @@ auto Acts::Propagator<S, N>::propagate_impl(propagator_state_t& state) const
       }
       // Post-stepping:
       // navigator status call - action list - aborter list - target call
+      std::chrono::high_resolution_clock::time_point t252 = std::chrono::high_resolution_clock::now();
       m_navigator.status(state, m_stepper);
+      std::chrono::high_resolution_clock::time_point t253 = std::chrono::high_resolution_clock::now();
       state.options.actionList(state, m_stepper, result);
+      std::chrono::high_resolution_clock::time_point t254 = std::chrono::high_resolution_clock::now();
       if (state.options.abortList(result, state, m_stepper)) {
         terminatedNormally = true;
         break;
       }
+      std::chrono::high_resolution_clock::time_point t255 = std::chrono::high_resolution_clock::now();
       m_navigator.target(state, m_stepper);
+      std::chrono::high_resolution_clock::time_point t256 = std::chrono::high_resolution_clock::now();
+
+      std::cout << "PropagatorLoop," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t256-t251).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t252-t251).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t253-t252).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t254-t253).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t255-t254).count() << "," <<
+        std::chrono::duration_cast<std::chrono::nanoseconds>(t256-t255).count() << std::endl;
     }
   } else {
     ACTS_VERBOSE("Propagation terminated without going into stepping loop.");
   }
+
+  std::chrono::high_resolution_clock::time_point t300 = std::chrono::high_resolution_clock::now();
 
   // if we didn't terminate normally (via aborters) set navigation break.
   // this will trigger error output in the lines below
@@ -77,9 +99,21 @@ auto Acts::Propagator<S, N>::propagate_impl(propagator_state_t& state) const
     return PropagatorError::StepCountLimitReached;
   }
 
+  std::chrono::high_resolution_clock::time_point t400 = std::chrono::high_resolution_clock::now();
+
   // Post-stepping call to the action list
   ACTS_VERBOSE("Stepping loop done.");
   state.options.actionList(state, m_stepper, result);
+
+  std::chrono::high_resolution_clock::time_point t500 = std::chrono::high_resolution_clock::now();
+
+  std::cout << "Propagator," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t500-t100).count() << "," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t200-t100).count() << "," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t250-t200).count() << "," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t300-t250).count() << "," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t400-t300).count() << "," <<
+    std::chrono::duration_cast<std::chrono::nanoseconds>(t500-t400).count() << std::endl;
 
   // return progress flag here, decide on SUCCESS later
   return Result<result_t>(std::move(result));
