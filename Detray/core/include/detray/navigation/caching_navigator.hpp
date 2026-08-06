@@ -335,6 +335,16 @@ class caching_navigator
       navigation.run_inspector(cfg, track.pos(), track.dir(),
                                "Update complete: fair trust: ");
 
+      // A portal was just reached: the volume switch in
+      // 'navigator_base::update()' initializes the next volume anyway, so
+      // re-initializing here would only search the volume that is about to be
+      // left. Same early exit as in the high trust case above.
+      if (navigation.is_on_portal()) {
+        DETRAY_VERBOSE_HOST_DEVICE("-> On portal: idx %d",
+                                   navigation.current_surface().index());
+        return !is_init;
+      }
+
       // If there are no reachable candidates in the cache after
       // re-evaluation, re-initialize the volume
       if (navigation.cache_exhausted()) {
