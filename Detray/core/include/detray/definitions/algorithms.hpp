@@ -19,6 +19,15 @@
 
 namespace detray {
 
+/// @brief Batcher odd-even merge sort network
+template <std::size_t N, std::random_access_iterator rand_iter_t,
+          typename comp_t = std::less<>>
+DETRAY_HOST_DEVICE inline void batcher_odd_even_merge_network_sort(
+    rand_iter_t first, comp_t&& comp = comp_t()) {
+  detray::detail::batcher_odd_even_merge_network_sort<N>(
+      first, std::forward<comp_t>(comp));
+}
+
 /// @brief sequential (single thread) sort function
 template <std::random_access_iterator rand_iter_t,
           std::sentinel_for<rand_iter_t> sentinel_t>

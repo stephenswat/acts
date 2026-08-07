@@ -225,6 +225,66 @@ class caching_navigator
   };
 
  private:
+  /// Compact the candidate cache and sort it by the distance to the track
+  ///
+  /// Every candidate before @param first_live has already been passed by the
+  /// track and is evicted, so that after the sort the cache holds exactly the
+  /// reachable candidates, ordered by distance and starting at index zero.
+  /// Unreachable candidates are invalidated by the caller and the slots beyond
+  /// the last valid candidate are kept at numeric max, so both of those sort
+  /// to the back as well.
+  ///
+  /// The cache has a fixed capacity, so a sorting network of that size can be
+  /// used. The network does not run on the intersections themselves, however,
+  /// but on one (distance, slot) pair per cache entry: a compare-exchange then
+  /// only moves a few registers instead of the full intersection payload.
+  ///
+  /// @param navigation the navigation state whose candidate cache is sorted
+  DETRAY_HOST_DEVICE static constexpr void sort_cache(
+      state &navigation, const unsigned int first_live) {
+    // Distance to a candidate and the slot that it currently occupies
+    struct sort_key_t {
+      scalar_t key;
+      unsigned int idx;
+    };
+
+    auto &candidates = navigation.candidates();
+
+    darray<sort_key_t, k_cache_capacity> order{};
+    for (unsigned int i = 0u; i < k_cache_capacity; ++i) {
+      // Evict the candidates that the track has already passed. They have to
+      // be marked unreachable rather than just sorted to the back, because
+      // 'find_invalid' determines the end of the cache from the path length
+      if (i < first_live) {
+        candidates[i].set_path(std::numeric_limits<scalar_t>::max());
+      }
+      order[i] = {math::fabs(candidates[i].path()), i};
+    }
+
+    detray::batcher_odd_even_merge_network_sort<k_cache_capacity>(
+        order.begin(), [](const sort_key_t &lhs, const sort_key_t &rhs) {
+          return lhs.key < rhs.key;
+        });
+
+    // Apply the permutation to the candidates in place: slot @c order[i].idx
+    // holds the candidate that belongs at position @c i , but it may already
+    // have been swapped away by an earlier iteration, so follow the cycle
+    // until the position that currently holds it is found. This costs at most
+    // one swap per candidate and nothing at all if the cache is already
+    // sorted, which is the common case here.
+    for (unsigned int i = 0u; i < k_cache_capacity; ++i) {
+      unsigned int j{order[i].idx};
+      while (j < i) {
+        j = order[j].idx;
+      }
+      if (j != i) {
+        const auto tmp{candidates[i]};
+        candidates[i] = candidates[j];
+        candidates[j] = tmp;
+      }
+    }
+  }
+
   /// Helper method to update the candidates (surface intersections)
   /// based on an externally provided trust level. Will (re-)initialize the
   /// navigation if there is no trust.
@@ -324,9 +384,15 @@ class caching_navigator
           candidate.set_path(std::numeric_limits<scalar_t>::max());
         }
       }
-      detray::sequential_sort(navigation.begin(), navigation.end());
-      // Take the nearest (sorted) candidate first
-      navigation.set_next(navigation.begin());
+      // Drop the candidates that lie behind the track and sort the remaining
+      // ones to the front of the cache
+      const auto first_live{static_cast<unsigned int>(detray::ranges::distance(
+          navigation.candidates().begin(), navigation.begin()))};
+      sort_cache(navigation, first_live);
+      // Take the nearest (sorted) candidate first: the cache is compacted, so
+      // that is the very first one. If the track sits on it, 'update_status'
+      // below advances past it, which makes it the current surface.
+      navigation.next_index(0);
       // Ignore unreachable elements (needed to determine exhaustion)
       navigation.set_last(find_invalid(navigation.candidates()));
       // Update navigation flow on the new candidate information

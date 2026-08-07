@@ -11,6 +11,7 @@ detray_add_unit_test(cpu
    "core/containers.cpp"
    "core/indexing.cpp"
    "geometry/identifier.cpp"
+   "utils/batcher_odd_even_merge_sort.cpp"
    "utils/find_bounds.cpp"
    "utils/invalid_values.cpp"
    "utils/ranges.cpp"
