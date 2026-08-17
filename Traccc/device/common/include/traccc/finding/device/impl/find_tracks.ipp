@@ -135,6 +135,19 @@ TRACCC_HOST_DEVICE inline void find_tracks(
   unsigned int curr_meas = 0;
 
   /*
+   * What a thread carries from the chi2 computation to the insertion loop
+   * that places it. The filtered parameters are not among them: the
+   * selection compares nothing but chi2 values, so the Kalman update can be
+   * deferred until the winners are known. Only the bookkeeping needed to
+   * find a candidate a slot has to be carried.
+   */
+  struct candidate_state {
+    traccc::scalar chi2;
+    unsigned int meas_idx;
+    unsigned int owner_local_thread_id;
+  };
+
+  /*
    * This loop keeps running until all threads have processed all of their
    * measurements.
    */
@@ -169,10 +182,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
 
     barrier.blockBarrier();
 
-    std::optional<std::tuple<
-        typename edm::track_state_collection<algebra_t>::device::object_type,
-        unsigned int, unsigned int>>
-        result = std::nullopt;
+    std::optional<candidate_state> result = std::nullopt;
 
     /*
      * The shared buffer is now full; each thread picks out zero or one of
@@ -205,55 +215,24 @@ TRACCC_HOST_DEVICE inline void find_tracks(
         const traccc::scalar chi2 = measurement_selector::predicted_chi2(
             meas, in_par, cfg.meas_calibration, is_line);
 
+        /*
+         * The $\chi^2$ value should be less than `chi2_max`. If it is, we
+         * emplace the measurement index and the thread ID into an optional
+         * value. The Kalman update does not run here: the selection below
+         * needs only the $\chi^2$ value, so the filtered parameters are
+         * computed once the winners are known.
+         *
+         * NOTE: Using the optional value here allows us to remove
+         * the depth of if-statements which is important for code
+         * quality but, more importantly, allows us to more easily
+         * use block-wide synchronization primitives.
+         */
         if (chi2 <= cfg.chi2_max && chi2 >= 0.f) {
-          edm::track_state trk_state =
-              edm::make_track_state<algebra_t>(measurements, meas_idx);
-          trk_state.filtered_chi2() = chi2;
-
-          // Kalman filter status code
-          kalman_fitter_status res{kalman_fitter_status::ERROR_OTHER};
-
-          if (payload.step == 0 && !sf.has_material()) {
-            // Only do this for the actual seed measurement
-            res = kalman_fitter_status::SUCCESS;
-
-            trk_state.filtered_params() = in_par;
-
-            // Update measurement covariance
-            const auto V =
-                measurement_selector::calibrated_measurement_covariance<
-                    algebra_t, 2>(meas, cfg.meas_calibration);
-
-            auto& filtered_cov = trk_state.filtered_params().covariance();
-            getter::element(filtered_cov, e_bound_loc0, e_bound_loc0) =
-                getter::element(V, 0, 0);
-            getter::element(filtered_cov, e_bound_loc1, e_bound_loc1) =
-                getter::element(V, 1, 1);
-          } else {
-            // Run the Kalman update on a copy of the track
-            // parameters
-            res = gain_matrix_updater<algebra_t>{}(
-                trk_state, meas, in_par, cfg.meas_calibration, is_line);
-          }
-
-          TRACCC_DEBUG_DEVICE("KF status: %d", res);
-
-          /*
-           * The $\chi^2$ value from the Kalman update should be less
-           * than `chi2_max`, and the fit should have succeeded. If
-           * both conditions are true, we emplace the state, the
-           * measurement index, and the thread ID into an optional
-           * value.
-           *
-           * NOTE: Using the optional value here allows us to remove
-           * the depth of if-statements which is important for code
-           * quality but, more importantly, allows us to more easily
-           * use block-wide synchronization primitives.
-           */
-          if (res == kalman_fitter_status::SUCCESS) {
-            TRACCC_VERBOSE_DEVICE("Found measurement: %d", meas_idx);
-            result.emplace(trk_state, meas_idx, owner_local_thread_id);
-          }
+          TRACCC_VERBOSE_DEVICE("Found measurement: %d", meas_idx);
+          result.emplace(
+              candidate_state{.chi2 = chi2,
+                              .meas_idx = meas_idx,
+                              .owner_local_thread_id = owner_local_thread_id});
         }
       }
     }
@@ -279,12 +258,13 @@ TRACCC_HOST_DEVICE inline void find_tracks(
          * First, we reconstruct some necessary information from the
          * data that we stored previously.
          */
-        const unsigned int meas_idx = std::get<1>(*result);
-        const unsigned int owner_local_thread_id = std::get<2>(*result);
+        const unsigned int meas_idx = result->meas_idx;
+        const unsigned int owner_local_thread_id =
+            result->owner_local_thread_id;
         const unsigned int owner_global_thread_id =
             owner_local_thread_id +
             thread_id.getBlockDimX() * thread_id.getBlockIdX();
-        const traccc::scalar chi2 = std::get<0>(*result).filtered_chi2();
+        const traccc::scalar chi2 = result->chi2;
         assert(chi2 >= 0.f);
         unsigned long long int* mutex_ptr =
             &shared_payload.shared_insertion_mutex[owner_local_thread_id];
@@ -458,13 +438,13 @@ TRACCC_HOST_DEVICE inline void find_tracks(
                 .n_consecutive_skipped = 0,
                 .chi2 = chi2,
                 .chi2_sum = prev_chi2_sum + chi2,
-                .ndf_sum =
-                    prev_ndf_sum +
-                    measurements.at(std::get<0>(*result).measurement_index())
-                        .dimensions()};
+                .ndf_sum = prev_ndf_sum +
+                           measurements.at(result->meas_idx).dimensions()};
 
-            tmp_params.at(p_offset + l_pos) =
-                std::get<0>(*result).filtered_params();
+            /*
+             * NOTE: The matching entry in `tmp_params` is written after the
+             * selection finishes, because this link may still be replaced.
+             */
           }
 
           /*
@@ -559,6 +539,82 @@ TRACCC_HOST_DEVICE inline void find_tracks(
 
     local_num_params = std::get<1>(decode_insertion_mutex(
         shared_payload.shared_insertion_mutex[thread_id.getLocalThreadIdX()]));
+
+    /*
+     * The selection is over, so the links in this thread's slice of the
+     * temporary array are final. Only now do we run the Kalman update, once
+     * per surviving candidate rather than once per candidate that passed the
+     * chi2 cut.
+     *
+     * This is also the cheaper place for it. The parameters belong to this
+     * thread, so the read is strided instead of permuted by owner, and the
+     * surface has to be resolved once instead of once per measurement.
+     */
+    if (local_num_params > 0) {
+      const unsigned int p_offset =
+          in_param_id * cfg.max_num_branches_per_surface;
+      const bound_track_parameters<>& in_par = in_params.at(in_param_id);
+      const detray::tracking_surface sf{det, in_par.surface_link()};
+      const bool is_line = detail::is_line(sf);
+      const bool has_material = sf.has_material();
+
+      /*
+       * A candidate whose update fails is dropped, so the survivors are
+       * packed towards the front of the slice to keep the count contiguous.
+       * When nothing fails this rewrites no links.
+       */
+      unsigned int n_updated = 0;
+
+      for (unsigned int i = 0; i < local_num_params; ++i) {
+        const unsigned int meas_idx = tmp_links.at(p_offset + i).meas_idx;
+        const edm::measurement meas = measurements.at(meas_idx);
+
+        bound_track_parameters<algebra_t> filtered_params;
+
+        // Kalman filter status code
+        kalman_fitter_status res{kalman_fitter_status::ERROR_OTHER};
+
+        if (payload.step == 0 && !has_material) {
+          // Only do this for the actual seed measurement
+          res = kalman_fitter_status::SUCCESS;
+
+          filtered_params = in_par;
+
+          // Update measurement covariance
+          const auto V =
+              measurement_selector::calibrated_measurement_covariance<algebra_t,
+                                                                      2>(
+                  meas, cfg.meas_calibration);
+
+          auto& filtered_cov = filtered_params.covariance();
+          getter::element(filtered_cov, e_bound_loc0, e_bound_loc0) =
+              getter::element(V, 0, 0);
+          getter::element(filtered_cov, e_bound_loc1, e_bound_loc1) =
+              getter::element(V, 1, 1);
+        } else {
+          // Run the Kalman update on a copy of the track
+          // parameters. The updater writes the vector and the covariance
+          // but not the surface link, which the measurement fixes.
+          filtered_params.set_surface_link(meas.surface_link());
+
+          res = gain_matrix_updater<algebra_t>{}(filtered_params, meas, in_par,
+                                                 cfg.meas_calibration, is_line);
+        }
+
+        TRACCC_DEBUG_DEVICE("KF status: %d", res);
+
+        if (res == kalman_fitter_status::SUCCESS) {
+          if (n_updated != i) {
+            tmp_links.at(p_offset + n_updated) = tmp_links.at(p_offset + i);
+          }
+
+          tmp_params.at(p_offset + n_updated) = filtered_params;
+          ++n_updated;
+        }
+      }
+
+      local_num_params = n_updated;
+    }
 
     /*
      * If we found zero parameters and we can create a hole, add that hole
