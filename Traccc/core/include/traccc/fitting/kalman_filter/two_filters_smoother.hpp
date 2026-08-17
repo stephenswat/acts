@@ -132,9 +132,11 @@ struct two_filters_smoother {
         measurement_selector::calibrated_measurement_covariance<algebra_t, D>(
             measurement, calib_cfg);
 
+    // This smoother has not been converted to structured matrices yet.
     matrix_type<D, e_bound_size> H =
         measurement_selector::observation_model<algebra_t, D>(
-            measurement, bound_params, is_line);
+            measurement, bound_params, is_line)
+            .template to_dense<algebra_t>();
 
     const matrix_type<D, 1> residual_smt = meas_local - H * smoothed_vec;
 

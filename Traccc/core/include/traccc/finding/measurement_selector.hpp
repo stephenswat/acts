@@ -18,6 +18,9 @@
 #include "traccc/utils/matrix_helpers.hpp"
 #include "traccc/utils/subspace.hpp"
 
+// Detray include(s).
+#include <detray/utils/known_substructure_matrix.hpp>
+
 // System include(s)
 #include <limits>
 
@@ -49,9 +52,15 @@ struct measurement_selector {
   /// @param is_line whether the measurement belong to a line surface
   ///
   /// @returns the projection matrix H
+  ///
+  /// @note A measurement subspace only ever selects @c e_bound_loc0 and
+  /// @c e_bound_loc1, so the result declares every further column a
+  /// structural zero. Call @c to_dense on it where a dense matrix is needed.
   template <detray::concepts::algebra algebra_t, unsigned int D,
             typename measurement_backend_t>
-  TRACCC_HOST_DEVICE static detray::dmatrix<algebra_t, D, e_bound_size>
+  TRACCC_HOST_DEVICE static detray::ksm::matrix<
+      observation_model_substructure<D, e_bound_size>,
+      detray::dscalar<algebra_t>>
   observation_model(const edm::measurement<measurement_backend_t>& measurement,
                     const bound_track_parameters<algebra_t>& bound_params,
                     const bool is_line) {
@@ -64,16 +73,14 @@ struct measurement_selector {
       subs.set_sign(0, true);
     }
 
-    detray::dmatrix<algebra_t, D, 1> meas_local;
-    edm::get_measurement_local<algebra_t>(measurement, meas_local);
     if (measurement.dimensions() == 1) {
       subs.set_invalid(1);
     }
 
-    const detray::dmatrix<algebra_t, D, e_bound_size> H =
-        subs.template projector<D>();
+    const auto H = subs.template projector<D, 2u>();
 
-    TRACCC_DEBUG_HOST("--> Observation model (H):\n" << H);
+    TRACCC_DEBUG_HOST("--> Observation model (H):\n"
+                      << H.template to_dense<algebra_t>());
 
     return H;
   }
@@ -119,8 +126,6 @@ struct measurement_selector {
     detray::dmatrix<algebra_t, D, D> V;
     edm::get_measurement_covariance<algebra_t>(measurement, V);
 
-    detray::dmatrix<algebra_t, D, 1> meas_local;
-    edm::get_measurement_local<algebra_t>(measurement, meas_local);
     if (measurement.dimensions() == 1) {
       getter::element(V, 1u, 1u) =
           std::numeric_limits<detray::dscalar<algebra_t>>::max();
@@ -152,6 +157,23 @@ struct measurement_selector {
     // Measurement maximal dimension
     constexpr unsigned int D = 2;
 
+    namespace ksm = detray::ksm;
+
+    // The shapes this computation reads its inputs into. The observation
+    // model needs none, because it already arrives structured.
+    using cov_type =
+        ksm::matrix<track_covariance_substructure<e_bound_size>, scalar_t>;
+    using meas_cov_type =
+        ksm::matrix<measurement_covariance_substructure<D>, scalar_t>;
+    using meas_vec_type = ksm::matrix<
+        typename ksm::make_dense_substructure<D, 1u>::canonical_type, scalar_t>;
+    using track_vec_type = ksm::matrix<
+        typename ksm::make_dense_substructure<e_bound_size, 1u>::canonical_type,
+        scalar_t>;
+    using masked_inverse_type =
+        ksm::matrix<typename ksm::make_dense_substructure<D, D>::canonical_type,
+                    scalar_t>;
+
     TRACCC_VERBOSE_HOST_DEVICE("--> dim: %d", measurement.dimensions());
 
     assert(measurement.dimensions() == 1u || measurement.dimensions() == 2u);
@@ -160,37 +182,44 @@ struct measurement_selector {
     assert(!bound_params.surface_link().is_invalid());
 
     // Get calibrated measurement and covariance
-    const matrix_t<algebra_t, D, 1> meas_local =
-        calibrated_measurement_position<algebra_t, D>(measurement, cfg);
+    const auto meas_local = meas_vec_type::template from_dense<algebra_t>(
+        calibrated_measurement_position<algebra_t, D>(measurement, cfg));
 
-    const matrix_t<algebra_t, D, D> V =
-        calibrated_measurement_covariance<algebra_t, D>(measurement, cfg);
+    const auto V = meas_cov_type::template from_dense<algebra_t>(
+        calibrated_measurement_covariance<algebra_t, D>(measurement, cfg));
 
-    // Project the predicted covariance to the observation
-    const matrix_t<algebra_t, D, e_bound_size> H =
+    // Project the predicted covariance to the observation. Only the upper
+    // triangle of the covariance is read, because the two mirrored elements
+    // of a transported covariance are equal only up to rounding.
+    const auto H =
         observation_model<algebra_t, D>(measurement, bound_params, is_line);
 
-    const matrix_t<algebra_t, D, D> R =
-        H * matrix::transposed_product<false, true>(bound_params.covariance(),
-                                                    H) +
-        V;
+    const auto predicted_cov =
+        symmetric_from_dense<cov_type>(bound_params.covariance());
 
-    const matrix_t<algebra_t, D, D> R_inv =
-        masked_inverse<algebra_t>(R, measurement.dimensions());
+    const auto R = H * (predicted_cov * H.transpose()) + V;
 
-    TRACCC_DEBUG_HOST("--> R:\n" << R);
-    TRACCC_DEBUG_HOST("--> R_inv:\n" << R_inv);
+    // The mask depends on the measurement dimension, which is a runtime
+    // value and so cannot be part of a substructure. The inverse is
+    // therefore taken on a dense matrix and read back.
+    const auto R_inv = masked_inverse_type::template from_dense<algebra_t>(
+        masked_inverse<algebra_t>(R.template to_dense<algebra_t>(),
+                                  measurement.dimensions()));
+
+    TRACCC_DEBUG_HOST("--> R:\n" << R.template to_dense<algebra_t>());
+    TRACCC_DEBUG_HOST("--> R_inv:\n" << R_inv.template to_dense<algebra_t>());
 
     // Residual between measurement and (projected) vector (innovation)
-    const matrix_t<algebra_t, D, 1> residual =
-        meas_local - H * bound_params.vector();
+    const auto residual =
+        meas_local - H * track_vec_type::template from_dense<algebra_t>(
+                             bound_params.vector());
 
-    TRACCC_DEBUG_HOST("--> Predicted residual:\n" << residual);
+    TRACCC_DEBUG_HOST("--> Predicted residual:\n"
+                      << residual.template to_dense<algebra_t>());
 
-    const matrix_t<algebra_t, 1, 1> pred_chi2 =
-        matrix::transposed_product<true, false>(residual, R_inv) * residual;
+    const auto pred_chi2 = (residual.transpose() * R_inv) * residual;
 
-    const scalar_t pred_chi2_val{getter::element(pred_chi2, 0, 0)};
+    const scalar_t pred_chi2_val{pred_chi2.template at<0, 0>()};
 
     if (!std::isfinite(pred_chi2_val)) {
       TRACCC_WARNING_HOST_DEVICE("Infinite predicted chi2 value!");

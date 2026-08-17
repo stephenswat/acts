@@ -19,6 +19,9 @@
 #include "traccc/utils/matrix_helpers.hpp"
 #include "traccc/utils/subspace.hpp"
 
+// Detray include(s).
+#include <detray/utils/known_substructure_matrix.hpp>
+
 namespace traccc {
 
 /// Type unrolling functor for Kalman updating
@@ -71,6 +74,27 @@ struct gain_matrix_updater {
       const measurement_selector::config& calib_cfg, const bool is_line) const {
     static constexpr unsigned int D = 2;
 
+    namespace ksm = detray::ksm;
+    using scalar_t = detray::dscalar<algebra_t>;
+
+    // The shapes this update reads its inputs into. The observation model
+    // needs none, because it already arrives structured.
+    using cov_type =
+        ksm::matrix<track_covariance_substructure<e_bound_size>, scalar_t>;
+    using meas_cov_type =
+        ksm::matrix<measurement_covariance_substructure<D>, scalar_t>;
+    using meas_vec_type = ksm::matrix<
+        typename ksm::make_dense_substructure<D, 1u>::canonical_type, scalar_t>;
+    using track_vec_type = ksm::matrix<
+        typename ksm::make_dense_substructure<e_bound_size, 1u>::canonical_type,
+        scalar_t>;
+    using masked_inverse_type =
+        ksm::matrix<typename ksm::make_dense_substructure<D, D>::canonical_type,
+                    scalar_t>;
+    using identity_type = ksm::matrix<
+        typename ksm::make_identity_substructure<e_bound_size>::canonical_type,
+        scalar_t>;
+
     const unsigned int dim{meas.dimensions()};
 
     TRACCC_VERBOSE_HOST_DEVICE("Perform Kalman filtering...");
@@ -83,42 +107,50 @@ struct gain_matrix_updater {
 
     TRACCC_DEBUG_HOST("Predicted param.: " << bound_params);
 
-    // Predicted vector and covariance of bound track parameters
-    const bound_vector_type& predicted_vec = bound_params.vector();
-    const bound_matrix_type& predicted_cov = bound_params.covariance();
+    // Predicted vector and covariance of bound track parameters. Only the
+    // upper triangle of the covariance is read, because the two mirrored
+    // elements of a transported covariance are equal only up to rounding.
+    const auto predicted_vec =
+        track_vec_type::template from_dense<algebra_t>(bound_params.vector());
+    const auto predicted_cov =
+        symmetric_from_dense<cov_type>(bound_params.covariance());
 
     // Measurement data on surface
-    const matrix_type<D, 1> meas_local =
+    const auto meas_local = meas_vec_type::template from_dense<algebra_t>(
         measurement_selector::calibrated_measurement_position<algebra_t, D>(
-            meas, calib_cfg);
+            meas, calib_cfg));
 
     // Spatial resolution (Measurement covariance)
-    const matrix_type<D, D> V =
+    const auto V = meas_cov_type::template from_dense<algebra_t>(
         measurement_selector::calibrated_measurement_covariance<algebra_t, D>(
-            meas, calib_cfg);
+            meas, calib_cfg));
 
-    const matrix_type<D, e_bound_size> H =
-        measurement_selector::observation_model<algebra_t, D>(
-            meas, bound_params, is_line);
+    const auto H = measurement_selector::observation_model<algebra_t, D>(
+        meas, bound_params, is_line);
 
-    TRACCC_DEBUG_HOST("-> Predicted residual:\n"
-                      << meas_local - H * predicted_vec);
+    TRACCC_DEBUG_HOST(
+        "-> Predicted residual:\n"
+        << (meas_local - H * predicted_vec).template to_dense<algebra_t>());
 
-    const matrix_type<e_bound_size, D> projected_cov =
-        matrix::transposed_product<false, true>(predicted_cov, H);
+    const auto projected_cov = predicted_cov * H.transpose();
 
-    const matrix_type<D, D> M_inv =
-        masked_inverse<algebra_t>(H * projected_cov + V, dim);
+    // The mask depends on `dim`, which is a runtime value and so cannot be
+    // part of a substructure. The inverse is therefore taken on a dense
+    // matrix and read back.
+    const auto M_inv = masked_inverse_type::template from_dense<algebra_t>(
+        masked_inverse<algebra_t>(
+            (H * projected_cov + V).template to_dense<algebra_t>(), dim));
 
     // Kalman gain matrix
-    const matrix_type<6, D> K = projected_cov * M_inv;
+    const auto K = projected_cov * M_inv;
 
-    TRACCC_DEBUG_HOST("-> H:\n" << H);
-    TRACCC_DEBUG_HOST("-> K:\n" << K);
+    TRACCC_DEBUG_HOST("-> H:\n" << H.template to_dense<algebra_t>());
+    TRACCC_DEBUG_HOST("-> K:\n" << K.template to_dense<algebra_t>());
 
     // Calculate the filtered track parameters
     matrix_type<6, 1> filtered_vec =
-        predicted_vec + K * (meas_local - H * predicted_vec);
+        (predicted_vec + K * (meas_local - H * predicted_vec))
+            .template to_dense<algebra_t>();
 
     TRACCC_DEBUG_HOST("-> Filtered param:\n" << filtered_vec);
 
@@ -148,12 +180,15 @@ struct gain_matrix_updater {
 
     // Some identity matrices
     // @TODO: Make constexpr work
-    const auto I66 = matrix::identity<bound_matrix_type>();
+    const auto I66 = identity_type::identity();
 
-    const matrix_type<6, 6> i_minus_kh = I66 - K * H;
+    const auto i_minus_kh = I66 - K * H;
+
+    // Both terms of the Joseph form are congruences, so the result is
+    // symmetric by construction and only its upper triangle is computed.
     matrix_type<6, 6> filtered_cov =
-        i_minus_kh * predicted_cov * matrix::transpose(i_minus_kh) +
-        K * V * matrix::transpose(K);
+        (i_minus_kh.congruence(predicted_cov) + K.congruence(V))
+            .template to_dense<algebra_t>();
 
     TRACCC_DEBUG_HOST("-> Filtered cov:\n" << filtered_cov);
 
