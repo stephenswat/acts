@@ -17,6 +17,8 @@
 #include <limits>
 
 #include <vecmem/memory/device_atomic_ref.hpp>
+
+#include "traccc/edm/measurement_collection.hpp"
 #if defined(__INTEL_LLVM_COMPILER) && defined(SYCL_LANGUAGE_VERSION)
 #undef __CUDA_ARCH__
 #endif
@@ -26,7 +28,6 @@
 #include "traccc/edm/track_state_helpers.hpp"
 #include "traccc/finding/measurement_selector.hpp"
 #include "traccc/fitting/kalman_filter/gain_matrix_updater.hpp"
-#include "traccc/fitting/kalman_filter/is_line_visitor.hpp"
 #include "traccc/fitting/status_codes.hpp"
 #include "traccc/utils/logging.hpp"
 
@@ -39,14 +40,12 @@
 
 namespace traccc::device {
 
-template <typename detector_t, concepts::thread_id1 thread_id_t,
-          concepts::barrier barrier_t>
+template <concepts::thread_id1 thread_id_t, concepts::barrier barrier_t>
 TRACCC_HOST_DEVICE inline void find_tracks(
     const thread_id_t& thread_id, const barrier_t& barrier,
-    const finding_config& cfg, typename detector_t::const_view_type det_data,
-    const find_tracks_payload& payload,
+    const finding_config& cfg, const find_tracks_payload& payload,
     const find_tracks_shared_payload& shared_payload) {
-  using algebra_t = typename detector_t::algebra_type;
+  using algebra_t = default_algebra;
 
   const unsigned int in_param_id = thread_id.getGlobalThreadIdX();
   const bool last_step = payload.step == cfg.max_track_candidates_per_track - 1;
@@ -54,7 +53,6 @@ TRACCC_HOST_DEVICE inline void find_tracks(
   /*
    * Initialize all of the device vectors from their vecmem views.
    */
-  detector_t det(det_data);
   edm::measurement_collection::const_device measurements(
       payload.measurements_view);
   bound_track_parameters_collection_types::const_device in_params(
@@ -197,13 +195,10 @@ TRACCC_HOST_DEVICE inline void find_tracks(
                                         : owner_global_thread_id;
 
       if (n_tracks_per_seed.at(seed_idx) < cfg.max_num_branches_per_seed) {
-        const detray::tracking_surface sf{det, in_par.surface_link()};
-        const bool is_line = detail::is_line(sf);
-
         const edm::measurement meas = measurements.at(meas_idx);
 
         const traccc::scalar chi2 = measurement_selector::predicted_chi2(
-            meas, in_par, cfg.meas_calibration, is_line);
+            meas, in_par, cfg.meas_calibration);
 
         if (chi2 <= cfg.chi2_max && chi2 >= 0.f) {
           edm::track_state trk_state =
@@ -213,7 +208,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
           // Kalman filter status code
           kalman_fitter_status res{kalman_fitter_status::ERROR_OTHER};
 
-          if (payload.step == 0 && !sf.has_material()) {
+          if (payload.step == 0 && !meas.is_on_material_surface()) {
             // Only do this for the actual seed measurement
             res = kalman_fitter_status::SUCCESS;
 
@@ -232,8 +227,8 @@ TRACCC_HOST_DEVICE inline void find_tracks(
           } else {
             // Run the Kalman update on a copy of the track
             // parameters
-            res = gain_matrix_updater<algebra_t>{}(
-                trk_state, meas, in_par, cfg.meas_calibration, is_line);
+            res = gain_matrix_updater<algebra_t>{}(trk_state, meas, in_par,
+                                                   cfg.meas_calibration);
           }
 
           TRACCC_DEBUG_DEVICE("KF status: %d", res);

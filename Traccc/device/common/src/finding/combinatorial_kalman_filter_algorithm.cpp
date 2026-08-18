@@ -359,7 +359,7 @@ auto combinatorial_kalman_filter_algorithm::operator()(
 
         // Launch the track finding kernel.
         find_tracks_kernel(
-            n_in_params, cfg, det,
+            n_in_params, cfg,
             {.measurements_view = measurements_view,
              .in_params_view = in_params_buffer,
              .in_params_liveness_view = param_liveness_buffer,

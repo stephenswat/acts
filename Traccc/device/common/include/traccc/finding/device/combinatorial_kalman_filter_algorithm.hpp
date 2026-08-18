@@ -137,7 +137,6 @@ class combinatorial_kalman_filter_algorithm
   ///
   virtual void find_tracks_kernel(
       unsigned int n_threads, const finding_config& config,
-      const detector_buffer& det,
       const device::find_tracks_payload& payload) const = 0;
 
   /// @brief Track condensing kernel launcher

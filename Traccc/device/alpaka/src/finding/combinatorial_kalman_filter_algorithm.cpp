@@ -308,30 +308,18 @@ void combinatorial_kalman_filter_algorithm::progressive_kalman_filter_kernel(
 
 void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
     unsigned int n_threads, const finding_config& config,
-    const detector_buffer& detector,
     const device::find_tracks_payload& payload) const {
   // Establish the kernel launch parameters.
   const unsigned int deviceThreads = warp_size() * 2;
   const unsigned int deviceBlocks =
       (n_threads + deviceThreads - 1) / deviceThreads;
 
-  // Launch the kernel for the appropriate detector type.
-  detector_buffer_visitor<detector_type_list>(
-      detector, [&]<typename detector_traits_t>(
-                    const typename detector_traits_t::view& det) {
-        // Copy the detector data to device memory.
-        vecmem::data::vector_buffer<typename detector_traits_t::view>
-            device_det(1u, mr().main);
-        copy().setup(device_det)->ignore();
-        copy()({1u, &det}, device_det)->ignore();
-
-        // Submit the kernel to the queue.
-        ::alpaka::exec<Acc>(
-            details::get_queue(queue()),
-            makeWorkDiv<Acc>(deviceBlocks, deviceThreads),
-            kernels::find_tracks<typename detector_traits_t::device>{}, config,
-            device_det.ptr(), payload);
-      });
+  // Submit the kernel to the queue.
+  ::alpaka::exec<Acc>(
+      details::get_queue(queue()),
+      makeWorkDiv<Acc>(deviceBlocks, deviceThreads),
+      kernels::find_tracks<typename detector_traits_t::device>{}, config,
+      payload);
 }
 
 void combinatorial_kalman_filter_algorithm::condense_tracks_kernel(

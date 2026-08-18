@@ -123,7 +123,6 @@ void combinatorial_kalman_filter_algorithm::progressive_kalman_filter_kernel(
 
 void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
     unsigned int n_threads, const finding_config& config,
-    const detector_buffer& detector,
     const device::find_tracks_payload& payload) const {
   // Establish the kernel launch parameters.
   const unsigned int deviceThreads = warp_size() * 2;
@@ -133,14 +132,8 @@ void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
       deviceThreads * sizeof(unsigned long long int) +
       2 * deviceThreads * sizeof(std::pair<unsigned int, unsigned int>);
 
-  // Launch the kernel for the appropriate detector type.
-  detector_buffer_visitor<detector_type_list>(
-      detector, [&]<typename detector_traits_t>(
-                    const typename detector_traits_t::view& det) {
-        find_tracks<typename detector_traits_t::device>(
-            deviceBlocks, deviceThreads, deviceSharedMem,
-            details::get_stream(stream()), config, det, payload);
-      });
+  kernels::find_tracks<<<deviceBlocks, deviceThreads, deviceSharedMem,
+                         details::get_stream(stream())>>>(config, payload);
   TRACCC_CUDA_ERROR_CHECK(cudaGetLastError());
 }
 

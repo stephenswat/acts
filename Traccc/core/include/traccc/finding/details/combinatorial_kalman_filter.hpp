@@ -16,7 +16,6 @@
 #include "traccc/finding/finding_config.hpp"
 #include "traccc/finding/measurement_selector.hpp"
 #include "traccc/fitting/kalman_filter/gain_matrix_updater.hpp"
-#include "traccc/fitting/kalman_filter/is_line_visitor.hpp"
 #include "traccc/fitting/status_codes.hpp"
 #include "traccc/sanity/contiguous_on.hpp"
 #include "traccc/utils/logging.hpp"
@@ -223,8 +222,6 @@ combinatorial_kalman_filter(
           std::tuple<candidate_link, bound_track_parameters<algebra_type>>>
           best_links;
 
-      const bool is_line = detail::is_line(sf);
-
       // Iterate over the measurements
       TRACCC_VERBOSE_HOST("No. measurements: " << (up - lo));
       for (unsigned int meas_id = lo; meas_id < up; meas_id++) {
@@ -234,7 +231,7 @@ combinatorial_kalman_filter(
         const edm::measurement meas = measurements.at(meas_id);
 
         const scalar_type chi2 = measurement_selector::predicted_chi2(
-            meas, in_param, config.meas_calibration, is_line);
+            meas, in_param, config.meas_calibration);
 
         // If the measurement is outside the chi2 cut, skip it
         if (chi2 > config.chi2_max || chi2 < 0.f) {
@@ -274,7 +271,7 @@ combinatorial_kalman_filter(
           // Run the Kalman update on the track state
           constexpr gain_matrix_updater<algebra_type> kalman_updater{};
           res = kalman_updater(trk_state, meas, in_param,
-                               config.meas_calibration, is_line);
+                               config.meas_calibration);
         }
 
         TRACCC_DEBUG_HOST("KF status: " << fitter_debug_msg{res}());

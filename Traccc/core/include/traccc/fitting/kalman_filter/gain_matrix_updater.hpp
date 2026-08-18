@@ -11,6 +11,7 @@
 #include "traccc/definitions/primitives.hpp"
 #include "traccc/definitions/qualifiers.hpp"
 #include "traccc/definitions/track_parametrization.hpp"
+#include "traccc/edm/measurement_collection.hpp"
 #include "traccc/edm/measurement_helpers.hpp"
 #include "traccc/finding/measurement_selector.hpp"
 #include "traccc/fitting/details/regularize_covariance.hpp"
@@ -47,9 +48,9 @@ struct gain_matrix_updater {
       typename edm::track_state<track_state_backend_t>& trk_state,
       const edm::measurement<measurement_backend_t>& meas,
       const bound_track_parameters<algebra_t>& bound_params,
-      const measurement_selector::config& calib_cfg, const bool is_line) const {
+      const measurement_selector::config& calib_cfg) const {
     return this->operator()(trk_state.filtered_params(), meas, bound_params,
-                            calib_cfg, is_line);
+                            calib_cfg);
   }
 
   /// Gain matrix updater operation
@@ -60,7 +61,6 @@ struct gain_matrix_updater {
   /// @param[out] filtered_params the filtered track vector and covariance
   /// @param[in] measurement the new measurement for the update
   /// @param[in] bound_params the predicted track parameters
-  /// @param[in] is_line whether the measurement is on a line shaped surface
   ///
   /// @return kalman fitter status
   template <typename measurement_backend_t>
@@ -68,7 +68,7 @@ struct gain_matrix_updater {
       bound_track_parameters<algebra_t>& filtered_params,
       const edm::measurement<measurement_backend_t>& meas,
       const bound_track_parameters<algebra_t>& bound_params,
-      const measurement_selector::config& calib_cfg, const bool is_line) const {
+      const measurement_selector::config& calib_cfg) const {
     static constexpr unsigned int D = 2;
 
     const unsigned int dim{meas.dimensions()};
@@ -98,8 +98,8 @@ struct gain_matrix_updater {
             meas, calib_cfg);
 
     const matrix_type<D, e_bound_size> H =
-        measurement_selector::observation_model<algebra_t, D>(
-            meas, bound_params, is_line);
+        measurement_selector::observation_model<algebra_t, D>(meas,
+                                                              bound_params);
 
     TRACCC_DEBUG_HOST("-> Predicted residual:\n"
                       << meas_local - H * predicted_vec);

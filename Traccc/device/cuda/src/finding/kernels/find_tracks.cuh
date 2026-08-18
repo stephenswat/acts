@@ -11,12 +11,8 @@
 #include "traccc/finding/device/find_tracks.hpp"
 #include "traccc/finding/finding_config.hpp"
 
-namespace traccc::cuda {
+namespace traccc::cuda::kernels {
 
-template <typename detector_t>
-void find_tracks(const dim3& grid_size, const dim3& block_size,
-                 std::size_t shared_mem_size, const cudaStream_t& stream,
-                 const finding_config& cfg,
-                 const typename detector_t::const_view_type& det,
-                 const device::find_tracks_payload& payload);
-}  // namespace traccc::cuda
+__global__ void find_tracks(const finding_config cfg,
+                            const device::find_tracks_payload payload);
+}  // namespace traccc::cuda::kernels

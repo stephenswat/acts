@@ -42,7 +42,7 @@ struct two_filters_smoother {
       typename edm::track_state<track_state_backend_t>& trk_state,
       const edm::measurement<measurement_backend_t>& measurement,
       bound_track_parameters<algebra_t>& bound_params,
-      const measurement_selector::config& calib_cfg, const bool is_line) const {
+      const measurement_selector::config& calib_cfg) const {
     static constexpr unsigned int D = 2;
 
     const unsigned int dim{measurement.dimensions()};
@@ -133,8 +133,8 @@ struct two_filters_smoother {
             measurement, calib_cfg);
 
     matrix_type<D, e_bound_size> H =
-        measurement_selector::observation_model<algebra_t, D>(
-            measurement, bound_params, is_line);
+        measurement_selector::observation_model<algebra_t, D>(measurement,
+                                                              bound_params);
 
     const matrix_type<D, 1> residual_smt = meas_local - H * smoothed_vec;
 

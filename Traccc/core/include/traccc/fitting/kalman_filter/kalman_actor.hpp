@@ -14,7 +14,6 @@
 #include "traccc/edm/track_state_collection.hpp"
 #include "traccc/finding/measurement_selector.hpp"
 #include "traccc/fitting/kalman_filter/gain_matrix_updater.hpp"
-#include "traccc/fitting/kalman_filter/is_line_visitor.hpp"
 #include "traccc/fitting/kalman_filter/two_filters_smoother.hpp"
 #include "traccc/fitting/status_codes.hpp"
 #include "traccc/utils/logging.hpp"
@@ -434,9 +433,6 @@ struct kalman_actor : detray::base_actor {
              bound_param.surface_link());
 
       // Run Kalman Gain Updater
-      const auto sf = navigation.current_surface();
-      const bool is_line = detail::is_line(sf);
-
       const auto measurement =
           actor_state.m_measurements.at(trk_state.measurement_index());
 
@@ -449,8 +445,7 @@ struct kalman_actor : detray::base_actor {
           // Forward filter
           TRACCC_DEBUG_HOST_DEVICE("Run filtering...");
           actor_state.fit_result = gain_matrix_updater<algebra_t>{}(
-              trk_state, measurement, bound_param, actor_state.m_calib_cfg,
-              is_line);
+              trk_state, measurement, bound_param, actor_state.m_calib_cfg);
 
           // Update the propagation flow
           bound_param = trk_state.filtered_params();
@@ -461,7 +456,7 @@ struct kalman_actor : detray::base_actor {
           if (actor_state.fit_result == kalman_fitter_status::SUCCESS) {
             // Calculate the chi2 on the filtered parameters
             trk_state.filtered_chi2() = measurement_selector::predicted_chi2(
-                measurement, bound_param, actor_state.m_calib_cfg, is_line);
+                measurement, bound_param, actor_state.m_calib_cfg);
           }
         } else {
           assert(false);
@@ -482,8 +477,7 @@ struct kalman_actor : detray::base_actor {
                 kalman_fitter_status::ERROR_UPDATER_SKIPPED_STATE;
           } else {
             actor_state.fit_result = two_filters_smoother<algebra_t>{}(
-                trk_state, measurement, bound_param, actor_state.m_calib_cfg,
-                is_line);
+                trk_state, measurement, bound_param, actor_state.m_calib_cfg);
           }
         } else {
           assert(false);

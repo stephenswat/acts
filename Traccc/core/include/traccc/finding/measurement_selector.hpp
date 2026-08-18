@@ -46,21 +46,20 @@ struct measurement_selector {
   ///
   /// @param measurement the measurement
   /// @param bound_params predicted bound track parameters
-  /// @param is_line whether the measurement belong to a line surface
   ///
   /// @returns the projection matrix H
   template <detray::concepts::algebra algebra_t, unsigned int D,
             typename measurement_backend_t>
   TRACCC_HOST_DEVICE static detray::dmatrix<algebra_t, D, e_bound_size>
   observation_model(const edm::measurement<measurement_backend_t>& measurement,
-                    const bound_track_parameters<algebra_t>& bound_params,
-                    const bool is_line) {
+                    const bound_track_parameters<algebra_t>& bound_params) {
     // Oservation model: Subspace of measurement space for this measurement
     subspace<algebra_t, e_bound_size> subs(measurement.subspace());
 
     // Flip the sign of projector matrix element in case the first element
     // of a line measurement is negative
-    if (is_line && bound_params.bound_local()[e_bound_loc0] < 0) {
+    if (measurement.is_on_line_surface() &&
+        bound_params.bound_local()[e_bound_loc0] < 0) {
       subs.set_sign(0, true);
     }
 
@@ -139,14 +138,13 @@ struct measurement_selector {
   /// @param measurement the measurement
   /// @param bound_params predicted bound track parameters
   /// @param cfg the calibration configuration
-  /// @param is_line whether the measurement belong to a line surface
   ///
   /// @returns the predicted chi2 of the calibrated measurement
   template <typename measurement_backend_t, detray::concepts::algebra algebra_t>
   TRACCC_HOST_DEVICE static detray::dscalar<algebra_t> predicted_chi2(
       const edm::measurement<measurement_backend_t>& measurement,
-      const bound_track_parameters<algebra_t>& bound_params, const config& cfg,
-      const bool is_line) {
+      const bound_track_parameters<algebra_t>& bound_params,
+      const config& cfg) {
     using scalar_t = detray::dscalar<algebra_t>;
 
     // Measurement maximal dimension
@@ -168,7 +166,7 @@ struct measurement_selector {
 
     // Project the predicted covariance to the observation
     const matrix_t<algebra_t, D, e_bound_size> H =
-        observation_model<algebra_t, D>(measurement, bound_params, is_line);
+        observation_model<algebra_t, D>(measurement, bound_params);
 
     const matrix_t<algebra_t, D, D> R =
         H * matrix::transposed_product<false, true>(bound_params.covariance(),
@@ -209,15 +207,13 @@ struct measurement_selector {
   /// @param measurements the measurement container
   /// @param meas_range contains the index ranges into the measurements
   /// @param cfg the calibration configuration
-  /// @param is_line whether the measurement belong to a line surface
   ///
   /// @returns the optimal candidate measurement for the input params
   template <detray::concepts::algebra algebra_t>
   TRACCC_HOST_DEVICE static candidate_measurement find_optimal_measurement(
       const bound_track_parameters<algebra_t>& bound_params,
       const typename edm::measurement_collection::const_device& measurements,
-      vecmem::device_vector<unsigned int> meas_ranges, const config& cfg,
-      const bool is_line) {
+      vecmem::device_vector<unsigned int> meas_ranges, const config& cfg) {
     using scalar_t = detray::dscalar<algebra_t>;
 
     // The optimal candidate
@@ -238,7 +234,7 @@ struct measurement_selector {
 
       // Predicted chi2
       const scalar_t chi2 = measurement_selector::predicted_chi2(
-          measurements.at(meas_idx), bound_params, cfg, is_line);
+          measurements.at(meas_idx), bound_params, cfg);
 
       // Check predicted chi2 cut
       if (chi2 < cand.chi2 && chi2 >= 0.f) {
@@ -259,7 +255,6 @@ struct measurement_selector {
   /// @param measurements the measurement container
   /// @param meas_range contains the index ranges into the measurements
   /// @param cfg the calibration configuration
-  /// @param is_line whether the measurement belong to a line surface
   ///
   /// @returns a collection of compatible measurements, sorted by pred.
   /// chi2
@@ -270,7 +265,7 @@ struct measurement_selector {
       const typename edm::measurement_collection::const_device&
       /*measurements*/,
       vecmem::device_vector<unsigned int> /*meas_ranges*/,
-      const config& /*cfg*/, const bool /*is_line*/) {
+      const config& /*cfg*/) {
     /* TODO: Implement*/
     assert(false);
     return {};

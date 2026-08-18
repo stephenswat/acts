@@ -144,10 +144,9 @@ TRACCC_HOST_DEVICE inline void build_tracks(
           measurement_selector::calibrated_measurement_covariance<
               default_algebra, 2>(meas, calib_cfg);
 
-      // TODO: Does not work for line surfaces!
       const detray::dmatrix<default_algebra, 2, e_bound_size> H =
           measurement_selector::observation_model<default_algebra, 2>(
-              meas, predicted_params, false);
+              meas, predicted_params);
 
       const auto S_inv = masked_inverse<default_algebra>(
           H * predicted_covariance * matrix::transpose(H) + V,

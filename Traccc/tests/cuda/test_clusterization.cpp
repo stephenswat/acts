@@ -159,6 +159,7 @@ TEST(CUDAClustering, SingleModule) {
                         0u,
                         detray::geometry::identifier{0u},
                         {1u, 1u},
+                        0u,
                         0u});
   references.push_back({{6.5f, 5.5f},
                         {0.483333f, 0.483333f},
@@ -168,7 +169,8 @@ TEST(CUDAClustering, SingleModule) {
                         0u,
                         detray::geometry::identifier{0u},
                         {1u, 1u},
-                        1u});
+                        1u,
+                        0u});
 
   std::vector<std::vector<unsigned int>> reference_disjoint_set{
       {0, 1, 2}, {3, 4, 5, 6, 7}};
@@ -203,6 +205,7 @@ TEST(CUDAClustering, SingleModuleUnsorted) {
                         0u,
                         detray::geometry::identifier{0u},
                         {1u, 1u},
+                        0u,
                         0u});
   references.push_back({{6.5f, 5.5f},
                         {0.483333f, 0.483333f},
@@ -212,7 +215,8 @@ TEST(CUDAClustering, SingleModuleUnsorted) {
                         0u,
                         detray::geometry::identifier{0u},
                         {1u, 1u},
-                        1u});
+                        1u,
+                        0u});
 
   std::vector<std::vector<unsigned int>> reference_disjoint_set{
       {5, 4, 1}, {7, 2, 3, 0, 6}};

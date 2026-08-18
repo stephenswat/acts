@@ -18,7 +18,6 @@
 #include "traccc/finding/measurement_selector.hpp"
 #include "traccc/finding/track_state_candidate.hpp"
 #include "traccc/fitting/kalman_filter/gain_matrix_updater.hpp"
-#include "traccc/fitting/kalman_filter/is_line_visitor.hpp"
 #include "traccc/fitting/status_codes.hpp"
 #include "traccc/utils/logging.hpp"
 
@@ -113,7 +112,6 @@ struct measurement_updater : detray::base_actor {
 
     // Get current detector surface (sensitive)
     const auto sf = navigation.current_surface();
-    const bool is_line = detail::is_line(sf);
     assert(sf.is_sensitive());
 
     // Track parameters on the sensitive surface
@@ -128,7 +126,7 @@ struct measurement_updater : detray::base_actor {
     const candidate_measurement cand =
         measurement_selector::find_optimal_measurement(
             bound_param, measurements, updater_state.m_measurement_ranges,
-            updater_state.m_calib_cfg, is_line);
+            updater_state.m_calib_cfg);
     if (cand.chi2 < std::numeric_limits<scalar_t>::max()) {
       // HACK: Silence SonarCloud S3923
       static_cast<void>(cand.chi2);
@@ -169,7 +167,7 @@ struct measurement_updater : detray::base_actor {
         // Run the Kalman update on the bound track params (in place!)
         constexpr gain_matrix_updater<algebra_t> kalman_updater{};
         res = kalman_updater(bound_param, meas, bound_param,
-                             updater_state.m_calib_cfg, is_line);
+                             updater_state.m_calib_cfg);
 
         TRACCC_DEBUG_HOST("-> KF status: " << fitter_debug_msg{res}());
 

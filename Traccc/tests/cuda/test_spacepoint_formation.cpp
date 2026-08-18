@@ -79,6 +79,7 @@ TEST(CUDASpacepointFormation, cuda) {
                           0u,
                           surfaces[0].identifier(),
                           {1u, 1u},
+                          0u,
                           0u});
 
   // Add a measurement at the last plane
@@ -90,7 +91,8 @@ TEST(CUDASpacepointFormation, cuda) {
                           0u,
                           surfaces[8u].identifier(),
                           {1u, 1u},
-                          1u});
+                          1u,
+                          0u});
 
   // Run spacepoint formation
   traccc::cuda::silicon_pixel_spacepoint_formation_algorithm sp_formation(

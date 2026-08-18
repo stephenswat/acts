@@ -159,6 +159,7 @@ TRACCC_HOST_DEVICE inline void aggregate_cluster(
   out.set_subspace(module_dd.subspace());
   // Set the index of the cluster that would be created for this measurement
   out.cluster_index() = link;
+  out.flags() = 0u;
 
   if (cfg.diameter_strategy == clustering_diameter_strategy::CHANNEL0) {
     out.diameter() = static_cast<float>(width[0]);

@@ -172,6 +172,9 @@ TRACCC_HOST_DEVICE inline void fill_measurement(
 
   // Save the index of the cluster that produced this measurement
   measurement.cluster_index() = static_cast<unsigned int>(index);
+
+  // TODO: set flagsout.set_subspace!
+  measurement.flags() = 0;
 }
 
 }  // namespace traccc::details

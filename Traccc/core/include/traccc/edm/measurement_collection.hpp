@@ -22,8 +22,14 @@
 #include <compare>
 #include <cstdint>
 #include <ostream>
+#include <type_traits>
 
 namespace traccc::edm {
+
+enum class measurement_flags : std::uint16_t {
+  ON_LINE_SURFACE = 0b1,
+  ON_MATERIAL_SURFACE = 0b10
+};
 
 /// Interface for the @c traccc::edm::measurement_collection type.
 ///
@@ -176,6 +182,19 @@ class measurement : public BASE {
   TRACCC_HOST_DEVICE
   const auto& cluster_index() const { return BASE::template get<8>(); }
 
+  /// Additional flags for the measurement (non-const)
+  ///
+  /// @return A (non-const) bitmap of flags
+  ///
+  TRACCC_HOST_DEVICE
+  auto& flags() { return BASE::template get<9>(); }
+  /// Additional flags for the measurement (const)
+  ///
+  /// @return A (const) bitmap of flags
+  ///
+  TRACCC_HOST_DEVICE
+  const auto& flags() const { return BASE::template get<9>(); }
+
   /// @}
 
   /// @name Utility functions
@@ -206,6 +225,18 @@ class measurement : public BASE {
       const measurement<T>& other) const;
 
   /// @}
+
+  /// Check whether a measurement is on a line surface
+  TRACCC_HOST_DEVICE bool is_on_line_surface() const {
+    return flags() & static_cast<std::underlying_type_t<measurement_flags>>(
+                         measurement_flags::ON_LINE_SURFACE);
+  }
+
+  /// Check whether a measurement is on a material surface
+  TRACCC_HOST_DEVICE bool is_on_material_surface() const {
+    return flags() & static_cast<std::underlying_type_t<measurement_flags>>(
+                         measurement_flags::ON_MATERIAL_SURFACE);
+  }
 
  private:
   /// @returns a string stream that prints the measurement details
@@ -256,7 +287,9 @@ using measurement_collection = vecmem::edm::container<
     // subspace
     vecmem::edm::type::vector<std::array<std::uint8_t, 2u>>,
     // cluster_index
-    vecmem::edm::type::vector<unsigned int>>;
+    vecmem::edm::type::vector<unsigned int>,
+    // flags
+    vecmem::edm::type::vector<std::uint16_t>>;
 
 }  // namespace traccc::edm
 

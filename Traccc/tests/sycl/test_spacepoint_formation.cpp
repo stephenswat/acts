@@ -74,6 +74,7 @@ TEST(SYCLSpacepointFormation, sycl) {
                           0u,
                           surfaces[0].identifier(),
                           {1u, 1u},
+                          0u,
                           0u});
 
   // Add a measurement at the last plane
@@ -85,7 +86,8 @@ TEST(SYCLSpacepointFormation, sycl) {
                           0u,
                           surfaces[8u].identifier(),
                           {1u, 1u},
-                          1u});
+                          1u,
+                          0u});
 
   // Run spacepoint formation
   traccc::sycl::silicon_pixel_spacepoint_formation_algorithm sp_formation(
