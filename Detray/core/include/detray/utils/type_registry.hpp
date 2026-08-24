@@ -369,6 +369,37 @@ inline constexpr std::size_t index_cast =
 
 /// @}
 
+/// Resolve the mapping of a filtered type registry at compile time
+/// @{
+namespace detail {
+
+/// @returns whether the original type at position @tparam orig_idx maps to the
+/// filtered type at position @tparam filtered_idx
+template <concepts::mapped_type_registry registry_t, std::size_t filtered_idx,
+          std::size_t orig_idx>
+inline constexpr bool maps_to_v{registry_t::mapped_index(orig_idx) ==
+                                filtered_idx};
+
+/// @returns whether @param idx is the position of an original type that maps
+/// to the filtered type at position @tparam filtered_idx
+///
+/// The index map is read at compile time, so the test reduces to a comparison
+/// of @param idx against the original positions that belong to the filtered
+/// type. The map itself therefore never reaches the generated code, which
+/// matters on device: it is returned by value from a @c consteval function, so
+/// every runtime read of it materializes a fresh copy in local memory.
+template <concepts::mapped_type_registry registry_t, std::size_t filtered_idx,
+          std::size_t... orig_idcs>
+DETRAY_HOST_DEVICE constexpr bool maps_to(
+    const std::size_t idx, std::index_sequence<orig_idcs...> /*seq*/) {
+  return (
+      (maps_to_v<registry_t, filtered_idx, orig_idcs> && idx == orig_idcs) ||
+      ...);
+}
+
+}  // namespace detail
+/// @}
+
 /// Variadic unrolling of the tuple that calls a functor on the element that
 /// corresponds to @param idx.
 ///
@@ -391,7 +422,9 @@ DETRAY_HOST_DEVICE constexpr decltype(auto) visit_helper(
     Args&&... args) {
   // Check if the current tuple index is matched to the target index
   if constexpr (concepts::mapped_type_registry<registry_t>) {
-    if (registry_t::mapped_index(idx) == current_idx) {
+    if (detail::maps_to<registry_t, current_idx>(
+            idx, std::make_index_sequence<
+                     types::size<typename registry_t::orig_types>>{})) {
       return functor_t{}(types::at<registry_t, current_idx>{},
                          std::forward<Args>(args)...);
     }
