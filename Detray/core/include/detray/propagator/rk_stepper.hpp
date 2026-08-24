@@ -74,8 +74,10 @@ class rk_stepper final
     vector3_type b_middle{0.f, 0.f, 0.f};
     vector3_type b_last{0.f, 0.f, 0.f};
     // t = tangential direction = dr/ds
+    // Index 0 is unused: t_1 is the track direction itself
     darray<vector3_type, 4u> t;
     // q/p
+    // Index 0 is unused: qop_1 is the track q/p itself
     darray<scalar_type, 4u> qop;
     // dt/ds = d^2r/ds^2 = q/p ( t X B )
     darray<vector3_type, 4u> dtds;
@@ -325,6 +327,7 @@ class rk_stepper final
         math::min(math::fabs(stepping.step_size()),
                   static_cast<scalar_type>(cfg.min_stepsize))};
     const point3_type pos = stepping().pos();
+    const vector3_type dir = stepping().dir();
 
     intermediate_state sd{};
 
@@ -343,10 +346,12 @@ class rk_stepper final
 
     // qop should be recalculated at every point
     // Reference: Eq (84) of https://doi.org/10.1016/0029-554X(81)90063-X
-    detray::tie(sd.dqopds[0u], sd.qop[0u]) =
-        evaluate_dqopds(stepping, 0u, 0.f, 0.f, vol_mat_ptr, cfg);
-    detray::tie(sd.dtds[0u], sd.t[0u]) = evaluate_dtds(
-        stepping, sd.b_first, 0u, 0.f, vector3_type{0.f, 0.f, 0.f}, sd.qop[0u]);
+    // The first point is the track state, so t_1 and qop_1 are not stored
+    sd.dqopds[0u] = detray::get<0u>(
+        evaluate_dqopds(stepping, 0u, 0.f, 0.f, vol_mat_ptr, cfg));
+    sd.dtds[0u] = detray::get<0u>(evaluate_dtds(stepping, sd.b_first, 0u, 0.f,
+                                                vector3_type{0.f, 0.f, 0.f},
+                                                stepping().qop()));
 
     /// RKN step trial and error estimation
     const auto estimate_error = [&](const scalar_type& h) {
@@ -358,8 +363,7 @@ class rk_stepper final
       // Second Runge-Kutta point
       // qop should be recalculated at every point
       // Eq (84) of https://doi.org/10.1016/0029-554X(81)90063-X
-      const point3_type pos1 =
-          pos + half_h * sd.t[0u] + h2 * 0.125f * sd.dtds[0u];
+      const point3_type pos1 = pos + half_h * dir + h2 * 0.125f * sd.dtds[0u];
       bvec = magnetic_field.at(pos1[0], pos1[1], pos1[2]);
       assert(math::isfinite(bvec[0]));
       assert(math::isfinite(bvec[1]));
@@ -388,7 +392,7 @@ class rk_stepper final
       // Last Runge-Kutta point
       // qop should be recalculated at every point
       // Eq (84) of https://doi.org/10.1016/0029-554X(81)90063-X
-      const point3_type pos2 = pos + h * sd.t[0u] + h2 * 0.5f * sd.dtds[2u];
+      const point3_type pos2 = pos + h * dir + h2 * 0.5f * sd.dtds[2u];
       bvec = magnetic_field.at(pos2[0], pos2[1], pos2[2]);
       assert(math::isfinite(bvec[0]));
       assert(math::isfinite(bvec[1]));
@@ -497,11 +501,8 @@ class rk_stepper final
     assert(math::fabs(stepping.next_step_size()) >= cfg.min_stepsize);
     assert(math::fabs(stepping.step_size()) >= cfg.min_stepsize);
 
-    // Advance track state
-    advance_track(stepping, sd, vol_mat_ptr);
-    assert(!stepping().is_invalid());
-
-    // Advance jacobian transport
+    // Advance jacobian transport. This runs before the track state is
+    // advanced, because the derivatives are evaluated at the start of the step
     if constexpr ((flags_v & static_cast<std::uint32_t>(
                                  detray::rk_stepper_flags::
                                      e_allow_covariance_transport)) != 0u) {
@@ -511,6 +512,10 @@ class rk_stepper final
     } else {
       assert(!cfg.do_covariance_transport);
     }
+
+    // Advance track state
+    advance_track(stepping, sd, vol_mat_ptr);
+    assert(!stepping().is_invalid());
 
     // Run final inspection
     stepping.run_inspector(cfg, "Step complete: ", dist_to_next);
@@ -593,7 +598,7 @@ class rk_stepper final
 
     // Update the track parameters according to the equations of motion
     // Reference: Eq (82) of https://doi.org/10.1016/0029-554X(81)90063-X
-    pos = pos + h * (sd.t[0u] + h_6 * (sd.dtds[0] + sd.dtds[1] + sd.dtds[2]));
+    pos = pos + h * (dir + h_6 * (sd.dtds[0] + sd.dtds[1] + sd.dtds[2]));
     track.set_pos(pos);
 
     // Reference: Eq (82) of https://doi.org/10.1016/0029-554X(81)90063-X
@@ -649,6 +654,10 @@ class rk_stepper final
     const scalar_type h2{h * h};
     const scalar_type half_h{h * 0.5f};
     const scalar_type h_6{h * (1.f / 6.f)};
+
+    // The track still holds the state at the start of the step, which is the
+    // first Runge-Kutta point
+    auto& track = stepping();
 
     /*---------------------------------------------------------------------------
      *  dk_n/dt1
@@ -758,7 +767,7 @@ class rk_stepper final
       } else {
         // Pre-calculate dqop_n/dqop1
         const scalar_type d2qop1dsdqop1 =
-            stepping.d2qopdsdqop(sd.qop[0u], vol_mat_ptr);
+            stepping.d2qopdsdqop(track.qop(), vol_mat_ptr);
 
         dqopn_dqop[0u] = 1.f;
         dqopn_dqop[1u] = 1.f + half_h * d2qop1dsdqop1;
@@ -788,29 +797,34 @@ class rk_stepper final
       -------------------------------------------------------------------*/
 
       {
-        darray<vector3_type, 4u> dkndqop;
-
         // dk1/dqop1
-        dkndqop[0u] = dqopn_dqop[0u] * vector::cross(sd.t[0u], sd.b_first);
+        const vector3_type dk1dqop =
+            dqopn_dqop[0u] * vector::cross(track.dir(), sd.b_first);
 
         // dk2/dqop1
-        dkndqop[1u] =
+        vector3_type dkndqop =
             dqopn_dqop[1u] * vector::cross(sd.t[1u], sd.b_middle) +
-            sd.qop[1u] * half_h * vector::cross(dkndqop[0u], sd.b_middle);
+            sd.qop[1u] * half_h * vector::cross(dk1dqop, sd.b_middle);
+
+        // Running sums of dk_n/dqop1, so that only one stage is kept alive
+        vector3_type sum_23 = dkndqop;
+        vector3_type sum_123 = dk1dqop + dkndqop;
 
         // dk3/dqop1
-        dkndqop[2u] =
-            dqopn_dqop[2u] * vector::cross(sd.t[2u], sd.b_middle) +
-            sd.qop[2u] * half_h * vector::cross(dkndqop[1u], sd.b_middle);
+        dkndqop = dqopn_dqop[2u] * vector::cross(sd.t[2u], sd.b_middle) +
+                  sd.qop[2u] * half_h * vector::cross(dkndqop, sd.b_middle);
+        sum_23 = sum_23 + dkndqop;
+        sum_123 = sum_123 + dkndqop;
+
+        // Set dF/dqop1
+        dFdqop = h * h_6 * sum_123;
 
         // dk4/dqop1
-        dkndqop[3u] = dqopn_dqop[3u] * vector::cross(sd.t[3u], sd.b_last) +
-                      sd.qop[3u] * h * vector::cross(dkndqop[2u], sd.b_last);
+        dkndqop = dqopn_dqop[3u] * vector::cross(sd.t[3u], sd.b_last) +
+                  sd.qop[3u] * h * vector::cross(dkndqop, sd.b_last);
 
-        // Set dF/dqop1 and dG/dqop1
-        dFdqop = h * h_6 * (dkndqop[0u] + dkndqop[1u] + dkndqop[2u]);
-        dGdqop = h_6 * (dkndqop[0u] + 2.f * (dkndqop[1u] + dkndqop[2u]) +
-                        dkndqop[3u]);
+        // Set dG/dqop1
+        dGdqop = h_6 * (dk1dqop + 2.f * sum_23 + dkndqop);
       }
     }
 
@@ -823,29 +837,34 @@ class rk_stepper final
 
     {
       const auto I33 = matrix::identity<matrix_type<3, 3>>();
-      darray<matrix_type<3u, 3u>, 4u> dkndt{I33, I33, I33, I33};
 
       // dk1/dt1
-      dkndt[0u] = sd.qop[0u] * matrix::column_wise_cross(dkndt[0u], sd.b_first);
+      const matrix_type<3u, 3u> dk1dt =
+          track.qop() * matrix::column_wise_cross(I33, sd.b_first);
 
       // dk2/dt1
-      dkndt[1u] = dkndt[1u] + half_h * dkndt[0u];
-      dkndt[1u] =
-          sd.qop[1u] * matrix::column_wise_cross(dkndt[1u], sd.b_middle);
+      matrix_type<3u, 3u> dkndt =
+          sd.qop[1u] *
+          matrix::column_wise_cross(I33 + half_h * dk1dt, sd.b_middle);
+
+      // Running sums of dk_n/dt1, so that only one stage is kept alive
+      matrix_type<3u, 3u> sum_23 = dkndt;
+      matrix_type<3u, 3u> sum_123 = dk1dt + dkndt;
 
       // dk3/dt1
-      dkndt[2u] = dkndt[2u] + half_h * dkndt[1u];
-      dkndt[2u] =
-          sd.qop[2u] * matrix::column_wise_cross(dkndt[2u], sd.b_middle);
+      dkndt = sd.qop[2u] *
+              matrix::column_wise_cross(I33 + half_h * dkndt, sd.b_middle);
+      sum_23 = sum_23 + dkndt;
+      sum_123 = sum_123 + dkndt;
+
+      dFdt = dFdt + h_6 * sum_123;
+      dFdt = h * dFdt;
 
       // dk4/dt1
-      dkndt[3u] = dkndt[3u] + h * dkndt[2u];
-      dkndt[3u] = sd.qop[3u] * matrix::column_wise_cross(dkndt[3u], sd.b_last);
+      dkndt =
+          sd.qop[3u] * matrix::column_wise_cross(I33 + h * dkndt, sd.b_last);
 
-      dFdt = dFdt + h_6 * (dkndt[0u] + dkndt[1u] + dkndt[2u]);
-      dFdt = h * dFdt;
-      dGdt =
-          dGdt + h_6 * (dkndt[0u] + 2.f * (dkndt[1u] + dkndt[2u]) + dkndt[3u]);
+      dGdt = dGdt + h_6 * (dk1dt + 2.f * sum_23 + dkndt);
     }
 
     // Calculate dkndr in case of considering B field gradient
@@ -856,55 +875,59 @@ class rk_stepper final
                                  rk_stepper_flags::e_allow_field_gradient)) !=
                   0u) {
       if (cfg.use_field_gradient) {
-        darray<matrix_type<3u, 3u>, 4u> dkndr;
-        auto& track = stepping();
-
-        // Positions and field gradients at initial, middle and final
-        // points of the fourth order RKN
-        vector3_type r_ini = track.pos();
-        vector3_type r_mid =
-            r_ini + half_h * sd.t[0u] + h2 * 0.125f * sd.dtds[0u];
-        vector3_type r_fin = r_ini + h * sd.t[0u] + h2 * 0.5f * sd.dtds[2u];
-
-        matrix_type<3, 3> dBdr_ini = evaluate_field_gradient(stepping, r_ini);
-        matrix_type<3, 3> dBdr_mid = evaluate_field_gradient(stepping, r_mid);
-        matrix_type<3, 3> dBdr_fin = evaluate_field_gradient(stepping, r_fin);
-
         /*-----------------------------------------------------------------
          * Calculate all terms of dk_n/dr1
         -------------------------------------------------------------------*/
         const auto I33 = matrix::identity<matrix_type<3, 3>>();
 
-        // dk1/dr1
-        dkndr[0u] = -sd.qop[0u] * matrix::column_wise_cross(dBdr_ini, sd.t[0u]);
+        // Position at the initial point of the fourth order RKN
+        const vector3_type r_ini = track.pos();
 
-        const auto dkndr0_tmp = (I33 + h2 * 0.125f * dkndr[0u]);
+        // dk1/dr1. The field gradient at the initial point is not needed
+        // after this, so it is not kept alive
+        const matrix_type<3u, 3u> dk1dr =
+            -track.qop() *
+            matrix::column_wise_cross(evaluate_field_gradient(stepping, r_ini),
+                                      track.dir());
+
+        // The field gradient at the middle point enters dk2/dr1 and dk3/dr1
+        // through this product only, so only the product is kept alive
+        const matrix_type<3u, 3u> dBdr_mid_tmp =
+            evaluate_field_gradient(stepping, r_ini + half_h * track.dir() +
+                                                  h2 * 0.125f * sd.dtds[0u]) *
+            (I33 + h2 * 0.125f * dk1dr);
 
         // dk2/dr1
-        dkndr[1u] = sd.qop[1u] *
-                    matrix::column_wise_cross(half_h * dkndr[0u], sd.b_middle);
-        dkndr[1u] =
-            dkndr[1u] - sd.qop[1u] * matrix::column_wise_cross(
-                                         dBdr_mid * dkndr0_tmp, sd.t[1u]);
+        matrix_type<3u, 3u> dkndr =
+            sd.qop[1u] *
+                matrix::column_wise_cross(half_h * dk1dr, sd.b_middle) -
+            sd.qop[1u] * matrix::column_wise_cross(dBdr_mid_tmp, sd.t[1u]);
+
+        // Running sums of dk_n/dr1, so that only one stage is kept alive
+        matrix_type<3u, 3u> sum_23 = dkndr;
+        matrix_type<3u, 3u> sum_123 = dk1dr + dkndr;
 
         // dk3/dr1
-        dkndr[2u] = sd.qop[2u] *
-                    matrix::column_wise_cross(half_h * dkndr[1u], sd.b_middle);
-        dkndr[2u] =
-            dkndr[2u] - sd.qop[2u] * matrix::column_wise_cross(
-                                         dBdr_mid * dkndr0_tmp, sd.t[2u]);
+        dkndr = sd.qop[2u] *
+                    matrix::column_wise_cross(half_h * dkndr, sd.b_middle) -
+                sd.qop[2u] * matrix::column_wise_cross(dBdr_mid_tmp, sd.t[2u]);
+        sum_23 = sum_23 + dkndr;
+        sum_123 = sum_123 + dkndr;
 
-        // dk4/dr1
-        dkndr[3u] =
-            sd.qop[3u] * matrix::column_wise_cross(h * dkndr[2u], sd.b_last);
-        dkndr[3u] = dkndr[3u] -
-                    sd.qop[3u] *
-                        matrix::column_wise_cross(
-                            dBdr_fin * (I33 + h2 * 0.5f * dkndr[2u]), sd.t[3u]);
+        // Set dF/dr1
+        dFdr = dFdr + h * h_6 * sum_123;
 
-        // Set dF/dr1 and dG/dr1
-        dFdr = dFdr + h * h_6 * (dkndr[0u] + dkndr[1u] + dkndr[2u]);
-        dGdr = h_6 * (dkndr[0u] + 2.f * (dkndr[1u] + dkndr[2u]) + dkndr[3u]);
+        // dk4/dr1. The field gradient at the final point is only needed here
+        dkndr = sd.qop[3u] * matrix::column_wise_cross(h * dkndr, sd.b_last) -
+                sd.qop[3u] * matrix::column_wise_cross(
+                                 evaluate_field_gradient(
+                                     stepping, r_ini + h * track.dir() +
+                                                   h2 * 0.5f * sd.dtds[2u]) *
+                                     (I33 + h2 * 0.5f * dkndr),
+                                 sd.t[3u]);
+
+        // Set dG/dr1
+        dGdr = h_6 * (dk1dr + 2.f * sum_23 + dkndr);
       }
     } else {
       assert(!cfg.use_field_gradient);
