@@ -10,9 +10,12 @@
 
 // Project include(s).
 #include "traccc/finding/candidate_link.hpp"
+#include "traccc/finding/device/build_surface_flags.hpp"
+#include "traccc/finding/device/surface_flags.hpp"
 
 // System include(s).
 #include <stdexcept>
+#include <type_traits>
 
 namespace traccc::device {
 
@@ -81,6 +84,18 @@ auto combinatorial_kalman_filter_algorithm::operator()(
   // Get upper bounds of measurement ranges per surface
   vecmem::data::vector_buffer<unsigned int> meas_ranges_buffer =
       build_measurement_ranges_buffer(det, n_measurements, measurements_view);
+
+  // The range buffer holds one entry per surface, so its capacity gives us the
+  // number of surfaces in the detector.
+  const unsigned int n_surfaces = meas_ranges_buffer.capacity();
+
+  // A buffer that stores the flags of each surface. The flags do not change
+  // over the CKF loop, so we fill them once, here.
+  vecmem::data::vector_buffer<std::underlying_type_t<surface_flags>>
+      surface_flag_buffer(n_surfaces, mr().main);
+  build_surface_flags_kernel(
+      n_surfaces, det,
+      build_surface_flags_payload{.surface_flags_view = surface_flag_buffer});
 
   // Get the number of track seeds. In an asynchronous way if possible.
   bound_track_parameters_collection_types::const_view::size_type n_seeds = 0u;
@@ -361,8 +376,9 @@ auto combinatorial_kalman_filter_algorithm::operator()(
 
         // Launch the track finding kernel.
         find_tracks_kernel(
-            n_in_params, cfg, det,
+            n_in_params, cfg,
             {.measurements_view = measurements_view,
+             .surface_flags_view = surface_flag_buffer,
              .in_params_view = in_params_buffer,
              .in_params_liveness_view = param_liveness_buffer,
              .n_in_params = n_in_params,

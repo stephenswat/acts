@@ -10,6 +10,7 @@
 // Library include(s).
 #include "traccc/device/algorithm_base.hpp"
 #include "traccc/edm/device/sort_key.hpp"
+#include "traccc/finding/device/build_surface_flags.hpp"
 #include "traccc/finding/device/build_tracks.hpp"
 #include "traccc/finding/device/condense_tracks.hpp"
 #include "traccc/finding/device/fill_finding_duplicate_removal_sort_keys.hpp"
@@ -39,6 +40,7 @@
 
 // VecMem include(s).
 #include <vecmem/containers/data/vector_buffer.hpp>
+#include <vecmem/containers/data/vector_view.hpp>
 
 // System include(s).
 #include <memory>
@@ -132,12 +134,10 @@ class combinatorial_kalman_filter_algorithm
   ///
   /// @param n_seeds The number of input seeds (same as the number of threads)
   /// @param config The track finding configuration
-  /// @param det The detector object
   /// @param payload The payload for the kernel
   ///
   virtual void find_tracks_kernel(
       unsigned int n_threads, const finding_config& config,
-      const detector_buffer& det,
       const device::find_tracks_payload& payload) const = 0;
 
   /// @brief Track condensing kernel launcher
@@ -258,6 +258,20 @@ class combinatorial_kalman_filter_algorithm
       unsigned int n_threads, bool run_mbf_smoother,
       const measurement_selector::config& calib_cfg,
       const device::build_tracks_payload& payload) const = 0;
+
+  /// Launch the @c build_surface_flags kernel
+  ///
+  /// The flags describe each surface of the detector, one entry per surface.
+  /// They are constant for a whole event, so the CKF loop computes them once
+  /// here and then reads them in every iteration.
+  ///
+  /// @param n_threads The number of threads to launch the kernel with
+  /// @param det The detector buffer to read the surfaces from
+  /// @param payload The payload for the kernel
+  ///
+  virtual void build_surface_flags_kernel(
+      unsigned int n_threads, const detector_buffer& det,
+      const device::build_surface_flags_payload& payload) const = 0;
 
   virtual move_only_any create_device_detector(
       const detector_buffer& det) const = 0;

@@ -1,0 +1,48 @@
+/** traccc library, part of the ACTS project (R&D line)
+ *
+ * (c) 2026 CERN for the benefit of the ACTS project
+ *
+ * Mozilla Public License Version 2.0
+ */
+
+// Local include(s).
+#include "../../utils/barrier.hpp"
+#include "../../utils/thread_id.hpp"
+#include "find_tracks.cuh"
+#include "traccc/finding/device/find_tracks.hpp"
+
+namespace traccc::cuda {
+namespace kernels {
+
+__global__ void find_tracks(
+    const __grid_constant__ finding_config cfg,
+    const __grid_constant__ device::find_tracks_payload payload) {
+  __shared__ unsigned int shared_num_out_params;
+  __shared__ unsigned int shared_candidates_size;
+  extern __shared__ unsigned long long int s[];
+  unsigned long long int* shared_insertion_mutex = s;
+  std::pair<unsigned int, unsigned int>* shared_candidates =
+      reinterpret_cast<std::pair<unsigned int, unsigned int>*>(
+          &shared_insertion_mutex[blockDim.x]);
+
+  cuda::barrier barrier;
+  details::thread_id1 thread_id;
+
+  device::find_tracks(thread_id, barrier, cfg, payload,
+                      device::find_tracks_shared_payload{
+                          .shared_num_out_params = shared_num_out_params,
+                          .shared_insertion_mutex = shared_insertion_mutex,
+                          .shared_candidates = shared_candidates,
+                          .shared_candidates_size = shared_candidates_size});
+}
+}  // namespace kernels
+
+void find_tracks(const dim3& grid_size, const dim3& block_size,
+                 std::size_t shared_mem_size, const cudaStream_t& stream,
+                 const finding_config& cfg,
+                 const device::find_tracks_payload& payload) {
+  kernels::find_tracks<<<grid_size, block_size, shared_mem_size, stream>>>(
+      cfg, payload);
+}
+
+}  // namespace traccc::cuda

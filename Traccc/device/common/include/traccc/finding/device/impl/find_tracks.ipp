@@ -15,6 +15,7 @@
 // compiler. This can be removed when intel/llvm#15443 makes it into a OneAPI
 // release.
 #include <limits>
+#include <type_traits>
 
 #include <vecmem/memory/device_atomic_ref.hpp>
 #if defined(__INTEL_LLVM_COMPILER) && defined(SYCL_LANGUAGE_VERSION)
@@ -39,14 +40,12 @@
 
 namespace traccc::device {
 
-template <typename detector_t, concepts::thread_id1 thread_id_t,
-          concepts::barrier barrier_t>
+template <concepts::thread_id1 thread_id_t, concepts::barrier barrier_t>
 TRACCC_HOST_DEVICE inline void find_tracks(
     const thread_id_t& thread_id, const barrier_t& barrier,
-    const finding_config& cfg, typename detector_t::const_view_type det_data,
-    const find_tracks_payload& payload,
+    const finding_config& cfg, const find_tracks_payload& payload,
     const find_tracks_shared_payload& shared_payload) {
-  using algebra_t = typename detector_t::algebra_type;
+  using algebra_t = default_algebra;
 
   const unsigned int in_param_id = thread_id.getGlobalThreadIdX();
   const bool last_step = payload.step == cfg.max_track_candidates_per_track - 1;
@@ -54,9 +53,10 @@ TRACCC_HOST_DEVICE inline void find_tracks(
   /*
    * Initialize all of the device vectors from their vecmem views.
    */
-  detector_t det(det_data);
   edm::measurement_collection::const_device measurements(
       payload.measurements_view);
+  vecmem::device_vector<const std::underlying_type_t<surface_flags>>
+      in_surface_flags(payload.surface_flags_view);
   bound_track_parameters_collection_types::const_device in_params(
       payload.in_params_view);
   vecmem::device_vector<const unsigned int> in_params_liveness(
@@ -197,8 +197,11 @@ TRACCC_HOST_DEVICE inline void find_tracks(
                                         : owner_global_thread_id;
 
       if (n_tracks_per_seed.at(seed_idx) < cfg.max_num_branches_per_seed) {
-        const detray::tracking_surface sf{det, in_par.surface_link()};
-        const bool is_line = detail::is_line(sf);
+        const auto sf_flags =
+            in_surface_flags.at(in_par.surface_link().index());
+        const bool is_line =
+            sf_flags & static_cast<std::underlying_type_t<surface_flags>>(
+                           surface_flags::e_is_line);
 
         const edm::measurement meas = measurements.at(meas_idx);
 
@@ -213,7 +216,11 @@ TRACCC_HOST_DEVICE inline void find_tracks(
           // Kalman filter status code
           kalman_fitter_status res{kalman_fitter_status::ERROR_OTHER};
 
-          if (payload.step == 0 && !sf.has_material()) {
+          const bool has_material =
+              sf_flags & static_cast<std::underlying_type_t<surface_flags>>(
+                             surface_flags::e_has_material);
+
+          if (payload.step == 0 && !has_material) {
             // Only do this for the actual seed measurement
             res = kalman_fitter_status::SUCCESS;
 

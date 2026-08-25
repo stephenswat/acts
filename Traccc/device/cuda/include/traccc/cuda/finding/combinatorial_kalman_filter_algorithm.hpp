@@ -12,6 +12,7 @@
 
 // Project include(s).
 #include "traccc/cuda/fitting/kalman_fitting_algorithm.hpp"
+#include "traccc/finding/device/build_surface_flags.hpp"
 #include "traccc/finding/device/combinatorial_kalman_filter_algorithm.hpp"
 
 namespace traccc::cuda {
@@ -78,12 +79,10 @@ class combinatorial_kalman_filter_algorithm
   ///
   /// @param n_threads The number of threads to launch the kernel with
   /// @param config The track finding configuration
-  /// @param det The detector object
   /// @param payload The payload for the kernel
   ///
   void find_tracks_kernel(
       unsigned int n_threads, const finding_config& config,
-      const detector_buffer& det,
       const device::find_tracks_payload& payload) const override;
 
   /// @brief Track condensing kernel launcher
@@ -204,6 +203,10 @@ class combinatorial_kalman_filter_algorithm
       unsigned int n_threads, bool run_mbf_smoother,
       const measurement_selector::config& calib_cfg,
       const device::build_tracks_payload& payload) const override;
+
+  void build_surface_flags_kernel(
+      unsigned int n_threads, const detector_buffer& det,
+      const device::build_surface_flags_payload& payload) const override;
 
   move_only_any create_device_detector(
       const detector_buffer& det) const override;

@@ -8,6 +8,7 @@
 // Local include(s).
 #include "../sanity/contiguous_on.cuh"
 #include "../utils/magnetic_field_types.hpp"
+#include "./kernels/build_surface_flags.cuh"
 #include "./kernels/build_tracks.cuh"
 #include "./kernels/condense_tracks.cuh"
 #include "./kernels/create_device_detector.cuh"
@@ -26,6 +27,7 @@
 #include "traccc/bfield/magnetic_field_types.hpp"
 #include "traccc/edm/device/identity_projector.hpp"
 #include "traccc/finding/details/combinatorial_kalman_filter_types.hpp"
+#include "traccc/finding/device/build_surface_flags.hpp"
 #include "traccc/finding/device/geo_id_surface_comparator.hpp"
 #include "traccc/geometry/detector_buffer.hpp"
 #include "traccc/utils/detector_buffer_bfield_visitor.hpp"
@@ -128,7 +130,6 @@ void combinatorial_kalman_filter_algorithm::progressive_kalman_filter_kernel(
 
 void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
     unsigned int n_threads, const finding_config& config,
-    const detector_buffer& detector,
     const device::find_tracks_payload& payload) const {
   // Establish the kernel launch parameters.
   const unsigned int deviceThreads = warp_size() * 2;
@@ -138,14 +139,8 @@ void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
       deviceThreads * sizeof(unsigned long long int) +
       2 * deviceThreads * sizeof(std::pair<unsigned int, unsigned int>);
 
-  // Launch the kernel for the appropriate detector type.
-  detector_buffer_visitor<detector_type_list>(
-      detector, [&]<typename detector_traits_t>(
-                    const typename detector_traits_t::view& det) {
-        find_tracks<typename detector_traits_t::device>(
-            deviceBlocks, deviceThreads, deviceSharedMem,
-            details::get_stream(stream()), config, det, payload);
-      });
+  find_tracks(deviceBlocks, deviceThreads, deviceSharedMem,
+              details::get_stream(stream()), config, payload);
   TRACCC_CUDA_ERROR_CHECK(cudaGetLastError());
 }
 
@@ -341,6 +336,29 @@ void combinatorial_kalman_filter_algorithm::build_tracks_kernel(
   kernels::build_tracks<<<deviceBlocks, deviceThreads, 0,
                           details::get_stream(stream())>>>(run_mbf_smoother,
                                                            calib_cfg, payload);
+  TRACCC_CUDA_ERROR_CHECK(cudaGetLastError());
+}
+
+void combinatorial_kalman_filter_algorithm::build_surface_flags_kernel(
+    unsigned int n_threads, const detector_buffer& det,
+    const device::build_surface_flags_payload& payload) const {
+  if (n_threads == 0) {
+    return;
+  }
+
+  // Establish the kernel launch parameters.
+  const unsigned int deviceThreads = 512;
+  const unsigned int deviceBlocks =
+      (n_threads + deviceThreads - 1) / deviceThreads;
+
+  // Launch the kernel for the appropriate detector type.
+  detector_buffer_visitor<detector_type_list>(
+      det, [&]<typename detector_traits_t>(
+               const typename detector_traits_t::view& det_view) {
+        build_surface_flags<typename detector_traits_t::device>(
+            deviceBlocks, deviceThreads, details::get_stream(stream()),
+            det_view, payload);
+      });
   TRACCC_CUDA_ERROR_CHECK(cudaGetLastError());
 }
 

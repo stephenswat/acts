@@ -115,6 +115,8 @@ traccc_add_library( traccc_device_common device_common
    "include/traccc/seeding/device/impl/estimate_track_params.ipp"
    # Track finding funtions(s).
    "include/traccc/finding/device/geo_id_surface_comparator.hpp"
+   "include/traccc/finding/device/surface_flags.hpp"
+   "include/traccc/finding/device/build_surface_flags.hpp"
    "include/traccc/finding/device/build_tracks.hpp"
    "include/traccc/finding/device/find_tracks_payload.hpp"
    "include/traccc/finding/device/find_tracks.hpp"

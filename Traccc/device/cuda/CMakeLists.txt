@@ -63,8 +63,10 @@ traccc_add_library( traccc_cuda cuda TYPE SHARED
   "src/finding/kernels/build_tracks.cuh"
   "src/finding/kernels/condense_tracks.cuh"
   "src/finding/kernels/condense_tracks.cu"
+  "src/finding/kernels/build_surface_flags.cuh"
   "src/finding/kernels/create_device_detector.cuh"
   "src/finding/kernels/find_tracks.cuh"
+  "src/finding/kernels/find_tracks.cu"
   "src/finding/kernels/gather_best_tips_per_measurement.cu"
   "src/finding/kernels/gather_measurement_votes.cu"
   "src/finding/kernels/update_tip_length_buffer.cu"
@@ -139,11 +141,11 @@ endfunction()
 # Generate specializations for the kernels.
 foreach(DETECTOR_NAME ${TRACCC_SUPPORTED_DETECTORS})
     traccc_add_cuda_specialization(
-      "src/finding/kernels/specializations/create_device_detector.cu.in"
+      "src/finding/kernels/specializations/build_surface_flags.cu.in"
       DETECTOR_NAME "${DETECTOR_NAME}"
     )
     traccc_add_cuda_specialization(
-      "src/finding/kernels/specializations/find_tracks.cu.in"
+      "src/finding/kernels/specializations/create_device_detector.cu.in"
       DETECTOR_NAME "${DETECTOR_NAME}"
     )
     foreach(

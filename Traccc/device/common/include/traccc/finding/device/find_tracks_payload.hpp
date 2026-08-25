@@ -13,12 +13,14 @@
 #include "traccc/edm/measurement_collection.hpp"
 #include "traccc/edm/track_parameters.hpp"
 #include "traccc/finding/candidate_link.hpp"
+#include "traccc/finding/device/surface_flags.hpp"
 
 // VecMem include(s).
 #include <vecmem/containers/data/vector_view.hpp>
 
 // System include(s).
 #include <cstdint>
+#include <type_traits>
 #include <utility>
 
 namespace traccc::device {
@@ -31,6 +33,12 @@ struct find_tracks_payload {
    * @warning Measurements on the same surface must be adjacent
    */
   edm::measurement_collection::const_view measurements_view;
+
+  /**
+   * @brief View object to a vector of surface flags, one per surface
+   */
+  vecmem::data::vector_view<const std::underlying_type_t<surface_flags>>
+      surface_flags_view;
 
   /**
    * @brief View object to the vector of track parameters

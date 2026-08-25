@@ -22,6 +22,7 @@
 // Project include(s).
 #include "traccc/bfield/magnetic_field_types.hpp"
 #include "traccc/finding/details/combinatorial_kalman_filter_types.hpp"
+#include "traccc/finding/device/build_surface_flags.hpp"
 #include "traccc/finding/device/build_tracks.hpp"
 #include "traccc/finding/device/fill_finding_duplicate_removal_sort_keys.hpp"
 #include "traccc/finding/device/fill_finding_propagation_sort_keys.hpp"
@@ -42,12 +43,10 @@ namespace traccc::alpaka {
 namespace kernels {
 
 /// Alpaka kernel functor for @c traccc::device::find_tracks
-template <typename detector_t>
 struct find_tracks {
   template <typename TAcc>
   ALPAKA_FN_ACC void operator()(
       TAcc const& acc, const finding_config& cfg,
-      const typename detector_t::const_view_type* det_data,
       const device::find_tracks_payload& payload) const {
     auto& shared_num_out_params =
         ::alpaka::declareSharedVar<unsigned int, __COUNTER__>(acc);
@@ -65,13 +64,12 @@ struct find_tracks {
         reinterpret_cast<std::pair<unsigned int, unsigned int>*>(
             &shared_insertion_mutex[blockDimX]);
 
-    device::find_tracks<detector_t>(
-        thread_id, barrier, cfg, *det_data, payload,
-        device::find_tracks_shared_payload{
-            .shared_num_out_params = shared_num_out_params,
-            .shared_insertion_mutex = shared_insertion_mutex,
-            .shared_candidates = shared_candidates,
-            .shared_candidates_size = shared_candidates_size});
+    device::find_tracks(thread_id, barrier, cfg, payload,
+                        device::find_tracks_shared_payload{
+                            .shared_num_out_params = shared_num_out_params,
+                            .shared_insertion_mutex = shared_insertion_mutex,
+                            .shared_candidates = shared_candidates,
+                            .shared_candidates_size = shared_candidates_size});
   }
 };
 
@@ -142,6 +140,19 @@ struct progressive_kalman_filter {
         ::alpaka::getIdx<::alpaka::Grid, ::alpaka::Threads>(acc)[0];
     device::progressive_kalman_filter<propagator_t>(
         globalThreadIdx, cfg, *det_data, field_data, sf_sequences, payload);
+  }
+};
+
+/// Alpaka kernel functor for @c traccc::device::build_surface_flags
+template <typename detector_t>
+struct build_surface_flags {
+  template <typename TAcc>
+  ALPAKA_FN_ACC void operator()(
+      TAcc const& acc, typename detector_t::const_view_type det_data,
+      const device::build_surface_flags_payload& payload) const {
+    const device::global_index_t globalThreadIdx =
+        ::alpaka::getIdx<::alpaka::Grid, ::alpaka::Threads>(acc)[0];
+    device::build_surface_flags<detector_t>(globalThreadIdx, det_data, payload);
   }
 };
 
@@ -331,30 +342,16 @@ void combinatorial_kalman_filter_algorithm::progressive_kalman_filter_kernel(
 
 void combinatorial_kalman_filter_algorithm::find_tracks_kernel(
     unsigned int n_threads, const finding_config& config,
-    const detector_buffer& detector,
     const device::find_tracks_payload& payload) const {
   // Establish the kernel launch parameters.
   const unsigned int deviceThreads = warp_size() * 2;
   const unsigned int deviceBlocks =
       (n_threads + deviceThreads - 1) / deviceThreads;
 
-  // Launch the kernel for the appropriate detector type.
-  detector_buffer_visitor<detector_type_list>(
-      detector, [&]<typename detector_traits_t>(
-                    const typename detector_traits_t::view& det) {
-        // Copy the detector data to device memory.
-        vecmem::data::vector_buffer<typename detector_traits_t::view>
-            device_det(1u, mr().main);
-        copy().setup(device_det)->ignore();
-        copy()({1u, &det}, device_det)->ignore();
-
-        // Submit the kernel to the queue.
-        ::alpaka::exec<Acc>(
-            details::get_queue(queue()),
-            makeWorkDiv<Acc>(deviceBlocks, deviceThreads),
-            kernels::find_tracks<typename detector_traits_t::device>{}, config,
-            device_det.ptr(), payload);
-      });
+  // Submit the kernel to the queue.
+  ::alpaka::exec<Acc>(details::get_queue(queue()),
+                      makeWorkDiv<Acc>(deviceBlocks, deviceThreads),
+                      kernels::find_tracks{}, config, payload);
 }
 
 void combinatorial_kalman_filter_algorithm::condense_tracks_kernel(
@@ -491,6 +488,30 @@ void combinatorial_kalman_filter_algorithm::propagate_to_next_surface_kernel(
       });
 }
 
+void combinatorial_kalman_filter_algorithm::build_surface_flags_kernel(
+    unsigned int n_threads, const detector_buffer& det,
+    const device::build_surface_flags_payload& payload) const {
+  if (n_threads == 0) {
+    return;
+  }
+
+  // Establish the kernel launch parameters.
+  const unsigned int deviceThreads = warp_size() * 8;
+  const unsigned int deviceBlocks =
+      (n_threads + deviceThreads - 1) / deviceThreads;
+
+  // Launch the kernel for the appropriate detector type.
+  detector_buffer_visitor<detector_type_list>(
+      det, [&]<typename detector_traits_t>(
+               const typename detector_traits_t::view& det_view) {
+        ::alpaka::exec<Acc>(
+            details::get_queue(queue()),
+            makeWorkDiv<Acc>(deviceBlocks, deviceThreads),
+            kernels::build_surface_flags<typename detector_traits_t::device>{},
+            det_view, payload);
+      });
+}
+
 move_only_any combinatorial_kalman_filter_algorithm::create_device_detector(
     const detector_buffer& det) const {
   return detector_buffer_visitor<detector_type_list>(
@@ -584,12 +605,11 @@ namespace alpaka::trait {
 
 /// Specify how much dynamic shared memory is needed for the
 /// @c traccc::alpaka::details::kernels::find_tracks kernel.
-template <typename TAcc, typename detector_t>
-struct BlockSharedMemDynSizeBytes<
-    traccc::alpaka::kernels::find_tracks<detector_t>, TAcc> {
+template <typename TAcc>
+struct BlockSharedMemDynSizeBytes<traccc::alpaka::kernels::find_tracks, TAcc> {
   template <typename TVec, typename... TArgs>
   ALPAKA_FN_HOST_ACC static auto getBlockSharedMemDynSizeBytes(
-      traccc::alpaka::kernels::find_tracks<detector_t> const& /* kernel */,
+      traccc::alpaka::kernels::find_tracks const& /* kernel */,
       TVec const& blockThreadExtent, TVec const& /* threadElemExtent */,
       TArgs const&... /* args */
       ) -> std::size_t {
