@@ -127,7 +127,7 @@ class direct_navigator {
     DETRAY_HOST_DEVICE
     constexpr void advance() {
       // The target has become the current candidate
-      this->candidates()[0] = this->target();
+      this->set_current(this->target());
 
       assert(has_next_external());
       if (is_forward()) {
