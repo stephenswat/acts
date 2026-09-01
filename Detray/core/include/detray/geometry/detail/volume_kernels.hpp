@@ -73,6 +73,8 @@ template <typename functor_t>
 struct apply_to_neighbourhood {
   /// Apply the functor to one contiguous run of surfaces
   ///
+  /// @param search the functor, which carries the state that does not change
+  ///               over the neighbourhood
   /// @param first the first surface descriptor of the run
   /// @param n the number of surface descriptors in the run
   /// @param vol_idx index of the volume that the surfaces belong to
@@ -80,6 +82,12 @@ struct apply_to_neighbourhood {
   /// @note The signature does not depend on the acceleration structure that
   /// produced the run, so the compiler emits this code once for all of them,
   /// instead of inlining it into every branch of the accelerator dispatch.
+  ///
+  /// @note @param search is taken by value on purpose. This function is not
+  /// inlined, so a reference would make the caller's copy escape into its
+  /// local frame, and every read of the state inside the loop would become a
+  /// local load. By value the callee owns the copy, which is loaded once per
+  /// run and then stays in registers for every surface of that run.
   template <typename surface_t, typename... Args>
   DETRAY_HOST_DEVICE
 // Not inlining this function keeps a single copy of the (very large) functor
@@ -90,13 +98,14 @@ struct apply_to_neighbourhood {
 #else
       inline
 #endif
-      static void process_run(const surface_t *first, const dindex n,
+      static void process_run(functor_t search, const surface_t *first,
+                              const dindex n,
                               [[maybe_unused]] const dindex vol_idx,
                               Args &&...args) {
     for (dindex i = 0u; i < n; ++i) {
       const surface_t &sf = first[i];
       assert(sf.volume() == vol_idx);
-      functor_t{}(sf, args...);
+      search(sf, args...);
     }
   }
 
@@ -109,7 +118,8 @@ struct apply_to_neighbourhood {
       const accel_coll_t &coll, const accel_index_t index,
       const detector_t &det, const typename detector_t::volume_type &volume,
       const track_t &track, const search_window<window_size_t, 2> &win_size,
-      const typename detector_t::geometry_context &ctx, Args &&...args) const {
+      const typename detector_t::geometry_context &ctx, const functor_t &search,
+      Args &&...args) const {
     using accel_type = typename accel_coll_t::value_type;
 
     decltype(auto) accel = coll[index];
@@ -119,14 +129,14 @@ struct apply_to_neighbourhood {
       // contiguous run at a time
       for (const auto &entry : accel.runs(det, volume, track, win_size, ctx)) {
         const auto run = entry.run();
-        process_run(run.first, run.size, volume.index(), args...);
+        process_run(search, run.first, run.size, volume.index(), args...);
       }
     } else if constexpr (concepts::volume_accelerator<accel_type>) {
       // Run over the daughter volumes in a single acceleration data
       // structure
       for (const dindex daughter_idx :
            accel.search(det, volume, track, win_size, ctx)) {
-        functor_t{}(daughter_idx, std::forward<Args>(args)...);
+        search(daughter_idx, args...);
       }
     }
   }

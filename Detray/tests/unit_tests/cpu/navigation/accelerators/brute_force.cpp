@@ -130,5 +130,5 @@ GTEST_TEST(detray_acceleration_structures, brute_force_search) {
                                                      {1.f, 0.f, 0.f}, -1.f);
 
   vol.template visit_neighborhood<object_id::e_portal, neighbor_visit_test>(
-      trk, win_size, ctx, test_vol_idx);
+      trk, win_size, ctx, neighbor_visit_test{}, test_vol_idx);
 }

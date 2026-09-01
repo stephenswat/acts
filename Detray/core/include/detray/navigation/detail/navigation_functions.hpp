@@ -24,7 +24,19 @@ namespace detray::navigation {
 /// A functor that fills the navigation candidates cache by intersecting
 /// a surface in the track position neighbourhood with the tangential to
 /// the track direction
+///
+/// @note The functor holds the state that does not change over the
+/// neighbourhood by value, and it crosses the (not inlined) run loop by value.
+/// Passing these small read-only objects by reference instead puts them into
+/// the caller's local frame, which turns every use inside the intersection
+/// into a local load.
+template <concepts::algebra algebra_t>
 struct candidate_search {
+  /// The tangential to the track direction
+  detray::detail::ray<algebra_t> tangential{};
+  /// Mask tolerances and overstep tolerance for the intersection
+  intersection::config inter_cfg{};
+
   /// Visit the volume acceleration data structure(s): Returns a range of
   /// surfaces each which is passed to this functor
   ///
@@ -32,19 +44,12 @@ struct candidate_search {
   ///                 neighbourhood
   /// @param det access to the detector
   /// @param ctx the geometry context
-  /// @param tangential the tangential to the track direction
   /// @param nav_state state of navigation stream of the track
-  /// @param mask_tol min. and max. mask tolerance
-  /// @param mask_tol_scalor scale factor with track distance in range of
-  ///                        @c mask_tol
-  /// @param overstep_tol how far behind the track pos to look for
-  /// candidates
-  template <typename traj_t, typename detector_t, typename navigation_state_t>
+  template <typename detector_t, typename navigation_state_t>
   DETRAY_HOST_DEVICE constexpr void operator()(
       const typename detector_t::surface_type &sf_descr, const detector_t &det,
       const typename detector_t::geometry_context &ctx,
-      const traj_t &tangential, navigation_state_t &nav_state,
-      const intersection::config &inter_cfg) const {
+      navigation_state_t &nav_state) const {
     const auto sf = detray::geometry::surface{det, sf_descr};
 
     DETRAY_DEBUG_HOST("--> Testing surface:\n" << sf);
@@ -58,12 +63,11 @@ struct candidate_search {
   }
 
   /// Test the volume links
-  template <typename traj_t, typename detector_t, typename navigation_state_t>
+  template <typename detector_t, typename navigation_state_t>
   DETRAY_HOST_DEVICE void operator()(
       const dindex & /*vol_idx*/, const detector_t & /*det*/,
       const typename detector_t::geometry_context & /*ctx*/,
-      const traj_t & /*tangential*/, navigation_state_t & /*nav_state*/,
-      const intersection::config & /*inter_cfg*/) const {
+      navigation_state_t & /*nav_state*/) const {
     // Do not search for daughter volumes
   }
 };
@@ -211,10 +215,11 @@ DETRAY_HOST_DEVICE
 
   // Search for neighboring surfaces and fill candidates into cache
   using volume_t = typename detector_t::volume_type;
+  using candidate_search_t = candidate_search<algebra_t>;
   volume.template visit_neighborhood<volume_t::object_id::e_all,
-                                     candidate_search>(
-      track, cfg.search_window, ctx, det, ctx, tangential, navigation,
-      intr_cfg);
+                                     candidate_search_t>(
+      track, cfg.search_window, ctx, candidate_search_t{tangential, intr_cfg},
+      det, ctx, navigation);
 
   // Determine overall state of the navigation after updating the cache
   navigation::update_status(navigation, cfg);
