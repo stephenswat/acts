@@ -10,6 +10,7 @@
 
 // Project include(s)
 #include "detray/core/detail/indexing.hpp"
+#include "detray/definitions/detail/qualifiers.hpp"
 #include "detray/utils/invalid_values.hpp"
 
 namespace detray {
@@ -29,6 +30,23 @@ using dindex_sequence = dvector<dindex>;
 /// Index that consists of multiple subindices
 template <typename index_t = dindex, std::size_t DIM = 3u>
 using dmulti_index = detail::multi_index<index_t, DIM>;
+
+/// A contiguous run of entries in a container, e.g. the surface descriptors
+/// that a single grid bin holds
+template <typename entry_t>
+struct entry_run {
+  /// Pointer to the first entry of the run
+  const entry_t *first{nullptr};
+  /// Number of entries in the run
+  dindex size{0u};
+
+  /// @returns this run
+  ///
+  /// @note Lets an acceleration structure yield either bins or runs from its
+  /// neighborhood search, while the caller treats both the same way.
+  DETRAY_HOST_DEVICE
+  constexpr const entry_run &run() const { return *this; }
+};
 
 /// Link consisting of a type ID and an index
 template <typename id_t = dindex, typename index_t = dindex,

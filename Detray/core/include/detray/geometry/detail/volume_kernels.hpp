@@ -71,6 +71,35 @@ struct apply_to_surfaces {
 ///                   neighbourhood (e.g. intersection)
 template <typename functor_t>
 struct apply_to_neighbourhood {
+  /// Apply the functor to one contiguous run of surfaces
+  ///
+  /// @param first the first surface descriptor of the run
+  /// @param n the number of surface descriptors in the run
+  /// @param vol_idx index of the volume that the surfaces belong to
+  ///
+  /// @note The signature does not depend on the acceleration structure that
+  /// produced the run, so the compiler emits this code once for all of them,
+  /// instead of inlining it into every branch of the accelerator dispatch.
+  template <typename surface_t, typename... Args>
+  DETRAY_HOST_DEVICE
+// Not inlining this function keeps a single copy of the (very large) functor
+// body and lets NVIDIA GPUs reconverge threads that use different acceleration
+// data structures. The call is made once per run, not once per surface.
+#if defined(__CUDACC__)
+      DETRAY_NO_INLINE
+#else
+      inline
+#endif
+      static void process_run(const surface_t *first, const dindex n,
+                              [[maybe_unused]] const dindex vol_idx,
+                              Args &&...args) {
+    for (dindex i = 0u; i < n; ++i) {
+      const surface_t &sf = first[i];
+      assert(sf.volume() == vol_idx);
+      functor_t{}(sf, args...);
+    }
+  }
+
   /// Call operator that forwards the neighborhood search call in a volume
   /// to a surface finder data structure
   template <concepts::accelerator_collection accel_coll_t,
@@ -86,10 +115,11 @@ struct apply_to_neighbourhood {
     decltype(auto) accel = coll[index];
 
     if constexpr (concepts::surface_accelerator<accel_type>) {
-      // Run over the surfaces in a single acceleration data structure
-      for (const auto &sf : accel.search(det, volume, track, win_size, ctx)) {
-        assert(sf.volume() == volume.index());
-        functor_t{}(sf, std::forward<Args>(args)...);
+      // Run over the surfaces in a single acceleration data structure, one
+      // contiguous run at a time
+      for (const auto &entry : accel.runs(det, volume, track, win_size, ctx)) {
+        const auto run = entry.run();
+        process_run(run.first, run.size, volume.index(), args...);
       }
     } else if constexpr (concepts::volume_accelerator<accel_type>) {
       // Run over the daughter volumes in a single acceleration data

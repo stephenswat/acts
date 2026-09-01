@@ -38,6 +38,10 @@ class single : public detray::ranges::single_view<entry_t> {
   DETRAY_HOST_DEVICE
   constexpr dindex capacity() noexcept { return 1u; }
 
+  /// @returns the bin content as a contiguous run of entries
+  DETRAY_HOST_DEVICE
+  constexpr entry_run<entry_t> run() const { return {this->begin(), 1u}; }
+
   /// Add a new entry to the bin
   template <typename E = entry_t>
   DETRAY_HOST_DEVICE constexpr void push_back(E&& entry) noexcept {
@@ -109,6 +113,12 @@ class static_array
   DETRAY_HOST_DEVICE
   constexpr dindex capacity() const noexcept {
     return static_cast<dindex>(m_content.size());
+  }
+
+  /// @returns the bin content as a contiguous run of entries
+  DETRAY_HOST_DEVICE
+  constexpr entry_run<entry_t> run() const {
+    return {m_content.data(), m_size};
   }
 
   /// Add a new entry to the bin
@@ -261,6 +271,12 @@ class dynamic_array
   /// The storage capacity of this bin
   DETRAY_HOST_DEVICE
   constexpr dindex capacity() const noexcept { return m_capacity; }
+
+  /// @returns the bin content as a contiguous run of entries
+  DETRAY_HOST_DEVICE
+  constexpr entry_run<entry_t> run() const {
+    return {m_global_storage, m_data->size};
+  }
 
   /// Add a new entry to the bin
   /// @note This does not check the state of the container it points to!!!

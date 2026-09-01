@@ -82,6 +82,26 @@ class brute_force_collection {
       return *this;
     }
 
+    /// @returns the surface range of the search volume as a single run
+    ///
+    /// @note The surfaces of a volume are contiguous, so the neighborhood is
+    /// always one run.
+    template <typename detector_t, typename track_t,
+              concepts::arithmetic window_size_t>
+    DETRAY_HOST_DEVICE constexpr auto runs(
+        const detector_t& /*det*/,
+        const typename detector_t::volume_type& /*volume*/,
+        const track_t& /*track*/,
+        const search_window<window_size_t, 2>& /*win_size*/,
+        const typename detector_t::geometry_context& /*ctx*/) const {
+      DETRAY_DEBUG_HOST("Brute force search...");
+
+      const auto n{static_cast<dindex>(this->size())};
+      const entry_run<value_t> r{n == 0u ? nullptr : &((*this)[0]), n};
+
+      return detray::ranges::single_view<entry_run<value_t>>{r};
+    }
+
     /// @returns the surface at a given index @param i - const
     DETRAY_HOST_DEVICE constexpr value_t at(const dindex i) const {
       return (*this)[i];

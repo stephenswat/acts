@@ -182,12 +182,57 @@ class spatial_grid_impl : public grid_t {
     return detray::views::join(std::move(search_area));
   }
 
+  /// @brief Return a neighborhood of bins from the grid
+  ///
+  /// Same lookup as @c search , but the bins are not joined into a single
+  /// sequence of entries. Every bin holds one contiguous run of entries, so
+  /// the caller can iterate the neighborhood run by run.
+  ///
+  /// @param p is point in the local frame
+  /// @param win_size size of the binned/scalar search window
+  ///
+  /// @return the sequence of bins
+  template <concepts::arithmetic window_size_t>
+  DETRAY_HOST_DEVICE auto runs(
+      const query_type &p,
+      const search_window<window_size_t, 2> &win_size) const {
+    DETRAY_DEBUG_HOST(" -> lookup pos: " << p);
+    DETRAY_DEBUG_HOST(" -> search window: [" << win_size[0] << ", "
+                                             << win_size[1] << "]");
+
+    auto bin_ranges = this->axes().bin_ranges(p, win_size);
+
+    return axis::detail::bin_view(*this, bin_ranges);
+  }
+
   /// Interface for the navigator
   template <typename detector_t, typename track_t,
             concepts::arithmetic window_size_t>
   DETRAY_HOST_DEVICE auto search(
       const detector_t &det, const typename detector_t::volume_type &volume,
       const track_t &track, const search_window<window_size_t, 2> &win_size,
+      const typename detector_t::geometry_context &ctx) const {
+    // Grid lookup
+    return search(query_point(det, volume, track, ctx), win_size);
+  }
+
+  /// Interface for the navigator
+  template <typename detector_t, typename track_t,
+            concepts::arithmetic window_size_t>
+  DETRAY_HOST_DEVICE auto runs(
+      const detector_t &det, const typename detector_t::volume_type &volume,
+      const track_t &track, const search_window<window_size_t, 2> &win_size,
+      const typename detector_t::geometry_context &ctx) const {
+    // Grid lookup
+    return runs(query_point(det, volume, track, ctx), win_size);
+  }
+
+ private:
+  /// @returns the grid local position that the track queries the grid with
+  template <typename detector_t, typename track_t>
+  DETRAY_HOST_DEVICE query_type query_point(
+      const detector_t &det, const typename detector_t::volume_type &volume,
+      const track_t &track,
       const typename detector_t::geometry_context &ctx) const {
     // Placement of the grid (same as volume)
     const auto &trf = det.transform_store().at(volume.transform(), ctx);
@@ -212,11 +257,9 @@ class spatial_grid_impl : public grid_t {
       loc_pos = this->project(trf, track.pos(), track.dir());
     }
 
-    // Grid lookup
-    return search(loc_pos, win_size);
+    return loc_pos;
   }
 
- private:
   /// @returns a mask that has boundaries which match the grid axis spans
   template <typename... Args>
   DETRAY_HOST_DEVICE mask_type get_mask_from_axes(Args &&...mask_values) {
