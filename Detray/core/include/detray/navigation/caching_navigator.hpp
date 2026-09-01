@@ -282,15 +282,22 @@ class caching_navigator
         track.pos(),
         static_cast<scalar_t>(navigation.direction()) * track.dir()};
 
+    const auto update_candidate = [&]() {
+      auto target = navigation.target();
+      const bool reachable = navigation::update_candidate(
+          target, tangential, det, cfg.intersection, navigation.external_tol(),
+          ctx);
+      navigation.set_target(target);
+      return reachable;
+    };
+
     // Update only the current candidate and the corresponding next target
     // - do this only when the navigation state is still coherent
     if (navigation.trust_level() == navigation::trust_level::e_high) {
       DETRAY_VERBOSE_HOST_DEVICE("Called 'update()' - high trust");
 
       // Update next candidate: If not reachable, 'high trust' is broken
-      if (!navigation::update_candidate(navigation.target(), tangential, det,
-                                        cfg.intersection,
-                                        navigation.external_tol(), ctx)) {
+      if (!update_candidate()) {
         DETRAY_VERBOSE_HOST_DEVICE(
             "-> Candidate not reachable! High trust broken:");
 
@@ -317,12 +324,11 @@ class caching_navigator
           }
           return !is_init;
         }
+
         // Else (if full trust): Track is on non-portal surface and
         // cache is not exhausted. Ready the next target
         if (navigation.trust_level() == navigation::trust_level::e_full &&
-            navigation::update_candidate(navigation.target(), tangential, det,
-                                         cfg.intersection,
-                                         navigation.external_tol(), ctx)) {
+            update_candidate()) {
           DETRAY_VERBOSE_HOST_DEVICE(
               "-> On non-portal surface (idx %d) and next candidate "
               "in cache is reachable",

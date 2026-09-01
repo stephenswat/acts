@@ -85,7 +85,9 @@ class direct_navigator {
           is_forward() ? 0 : static_cast<dist_t>(m_sequence.size()) - 1;
 
       // Update the target with the next external surface
-      this->target().set_surface(next_external());
+      auto target = this->target();
+      target.set_surface(next_external());
+      this->set_target(target);
 
       // The next candidate is always stored in the second cache entry
       this->next_index(1u);
@@ -140,8 +142,10 @@ class direct_navigator {
       // Could make the target invalid -> exit navigation
       if (has_next_external()) {
         // If the next external can be indexed, the cast is safe
-        this->target().set_surface(
+        auto target = this->target();
+        target.set_surface(
             m_sequence[static_cast<unsigned int>(m_next_external)]);
+        this->set_target(target);
       }
 
       assert(
@@ -240,11 +244,17 @@ class direct_navigator {
           track.pos(),
           static_cast<scalar_t>(navigation.direction()) * track.dir()};
 
+      const auto update_candidate = [&]() {
+        auto target = navigation.target();
+        const bool reachable = navigation::update_candidate(
+            target, tangential, det, intr_cfg, navigation.external_tol(), ctx);
+        navigation.set_target(target);
+        return reachable;
+      };
+
       // Update the current target. If it cannot be reached, direct
       // navigation is broken
-      if (!navigation::update_candidate(navigation.target(), tangential, det,
-                                        intr_cfg, navigation.external_tol(),
-                                        ctx)) {
+      if (!update_candidate()) {
         navigation.abort("Could not reach current target");
         return !is_init;
       }
@@ -267,10 +277,7 @@ class direct_navigator {
       }
 
       // Otherwise, track is on surface: Update the next target
-      if (navigation.has_next_external() &&
-          !navigation::update_candidate(navigation.target(), tangential, det,
-                                        intr_cfg, navigation.external_tol(),
-                                        ctx)) {
+      if (navigation.has_next_external() && !update_candidate()) {
         navigation.abort("Could not find new target after surface was reached");
         return !is_init;
       }

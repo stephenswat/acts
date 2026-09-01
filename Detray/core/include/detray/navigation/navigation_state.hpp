@@ -409,7 +409,6 @@ class base_state {
   constexpr auto &inspector() { return m_inspector; }
 
   template <typename callable_t>
-    requires(std::invocable<callable_t, const candidate_t &>)
   DETRAY_HOST_DEVICE constexpr void for_each_valid(callable_t &&f) const {
     for (std::size_t i = this->valid_begin(); i < this->valid_end(); ++i) {
       f(this->candidate_at(i));
@@ -454,11 +453,11 @@ class base_state {
   }
 
   template <typename callable_t>
-    requires(std::invocable<callable_t, candidate_t &> &&
-             !std::invocable<callable_t, const candidate_t &>)
   DETRAY_HOST_DEVICE constexpr void for_each_valid(callable_t &&f) {
     for (std::size_t i = this->valid_begin(); i < this->valid_end(); ++i) {
-      f(this->candidate_at(i));
+      auto cand = this->candidate_at(i);
+      f(cand);
+      this->set_candidate_at(i, cand);
     }
   }
 
@@ -497,20 +496,20 @@ class base_state {
   DETRAY_HOST_DEVICE
   constexpr void set_current(const candidate_t &c) {
     assert(m_next >= 1);
-    candidates()[m_next - 1] = c;
+    m_candidates[m_next - 1] = c;
   };
 
   DETRAY_HOST_DEVICE
-  constexpr void set_target(const candidate_t &c) { candidates()[m_next] = c; };
+  constexpr void set_target(const candidate_t &c) { m_candidates[m_next] = c; };
 
   DETRAY_HOST_DEVICE
   constexpr void set_candidate_at(std::size_t i, const candidate_t &c) {
-    candidates()[i] = c;
+    m_candidates[i] = c;
   };
 
   /// @returns current/previous object that was reached
   DETRAY_HOST_DEVICE
-  constexpr auto current() -> candidate_t & {
+  constexpr auto current() -> const candidate_t {
     assert(cast_impl().is_on_surface());
     assert(m_next > 0);
     return this->candidate_at(m_next - 1);
@@ -518,28 +517,13 @@ class base_state {
 
   /// @returns next object that we want to reach (current target)
   DETRAY_HOST_DEVICE
-  constexpr auto target() -> candidate_t & {
+  constexpr auto target() -> const candidate_t {
     assert(static_cast<std::size_t>(m_next) < k_cache_capacity);
     return this->candidate_at(m_next);
   }
 
-  template <std::size_t I>
-  DETRAY_HOST_DEVICE constexpr auto candidate_at() const -> candidate_t {
-    return m_candidates[I];
-  }
-
-  template <std::size_t I>
-  DETRAY_HOST_DEVICE constexpr auto candidate_at() -> candidate_t & {
-    return m_candidates[I];
-  }
-
   DETRAY_HOST_DEVICE
-  constexpr auto candidate_at(std::size_t i) const -> candidate_t {
-    return m_candidates[i];
-  }
-
-  DETRAY_HOST_DEVICE
-  constexpr auto candidate_at(std::size_t i) -> candidate_t & {
+  constexpr auto candidate_at(std::size_t i) const -> const candidate_t {
     return m_candidates[i];
   }
 
@@ -562,7 +546,9 @@ class base_state {
   constexpr void clear_cache() {
     // Mark all data in the cache as unreachable
     for (std::size_t i = 0u; i < k_cache_capacity; ++i) {
-      this->candidate_at(i).set_path(std::numeric_limits<scalar_t>::max());
+      auto cand = this->candidate_at(i);
+      cand.set_path(std::numeric_limits<scalar_t>::max());
+      this->set_candidate_at(i, cand);
     }
     m_next = 0;
     m_last = -1;
@@ -606,10 +592,6 @@ class base_state {
                          << detray::navigation::print_candidates(
                                 derived, cfg, track_pos, track_dir));
   }
-
-  /// @returns currently cached candidates
-  DETRAY_HOST_DEVICE
-  constexpr auto candidates() -> candidate_cache_t & { return m_candidates; }
 
  private:
   /// @returns a string stream that prints the navigation state details
