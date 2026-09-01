@@ -92,13 +92,37 @@ class base_state {
 
   // Result of a geometry object evaluation
   using candidate_t = intersection_t;
-  using candidate_cache_t = darray<candidate_t, k_cache_capacity>;
-  using candidate_itr_t = typename candidate_cache_t::iterator;
-  using candidate_const_itr_t = typename candidate_cache_t::const_iterator;
   using dist_t = std::int_least8_t;
 
   // Link type to the next detector volume
   using nav_link_t = typename detector_t::surface_type::navigation_link;
+
+  /// @brief Compact in-cache representation of a candidate.
+  ///
+  /// The 16-byte surface descriptor is not kept in the cache. Only the index
+  /// of the surface is stored, and the descriptor is looked up in the detector
+  /// when a full candidate is read back out. This trades per-thread local
+  /// memory for loads from the (cached, warp-shared) surface store.
+  struct slim_candidate_t {
+    /// Index of the surface in the detector surface store
+    dindex sf_index{detail::invalid_value<dindex>()};
+    /// Distance to the intersection along the test trajectory
+    scalar_t path{std::numeric_limits<scalar_t>::max()};
+    /// Navigation link to the next volume (portals only)
+    nav_link_t volume_link{detail::invalid_value<nav_link_t>()};
+    /// Result of the mask check
+    intersection::status status{intersection::status::e_outside};
+    /// Direction of the intersection with respect to the track
+    bool direction{true};
+  };
+
+  /// The packed form drops the local intersection point, so it can only be
+  /// used when the candidate does not carry one (i.e. outside debug builds).
+  static constexpr bool k_packed_cache{!candidate_t::contains_pos()};
+
+  using cache_entry_t =
+      std::conditional_t<k_packed_cache, slim_candidate_t, candidate_t>;
+  using candidate_cache_t = darray<cache_entry_t, k_cache_capacity>;
 
  public:
   using detector_type = detector_t;
@@ -436,14 +460,15 @@ class base_state {
   DETRAY_HOST_DEVICE
   constexpr void evict_invalid() {
     // Depends on previous invalidation of unreachable candidates!
-    auto not_reachable = [](const intersection_t &candidate) {
-      return candidate.path() == std::numeric_limits<scalar_t>::max();
+    // Only the sort key is needed, so do not rebuild the candidates.
+    auto not_reachable = [this](std::size_t index) {
+      return this->path_at(index) == std::numeric_limits<scalar_t>::max();
     };
 
     std::size_t i = 0;
 
     for (; i < k_cache_capacity; ++i) {
-      if (not_reachable(this->candidate_at(i))) {
+      if (not_reachable(i)) {
         break;
       }
     }
@@ -496,16 +521,41 @@ class base_state {
   DETRAY_HOST_DEVICE
   constexpr void set_current(const candidate_t &c) {
     assert(m_next >= 1);
-    m_candidates[m_next - 1] = c;
+    this->set_candidate_at(static_cast<std::size_t>(m_next) - 1u, c);
   };
 
   DETRAY_HOST_DEVICE
-  constexpr void set_target(const candidate_t &c) { m_candidates[m_next] = c; };
+  constexpr void set_target(const candidate_t &c) {
+    this->set_candidate_at(static_cast<std::size_t>(m_next), c);
+  };
 
   DETRAY_HOST_DEVICE
   constexpr void set_candidate_at(std::size_t i, const candidate_t &c) {
-    m_candidates[i] = c;
+    if constexpr (k_packed_cache) {
+      const auto geo_id = c.surface().identifier();
+
+      m_candidates[i] =
+          slim_candidate_t{geo_id.is_invalid() ? detail::invalid_value<dindex>()
+                                               : geo_id.index(),
+                           c.path(), c.volume_link(), c.status(), c.is_along()};
+    } else {
+      m_candidates[i] = c;
+    }
   };
+
+  /// Move the packed cache entry at @param from to position @param to
+  DETRAY_HOST_DEVICE
+  constexpr void move_candidate(std::size_t from, std::size_t to) {
+    m_candidates[to] = m_candidates[from];
+  }
+
+  /// Exchange the packed cache entries at @param i and @param k
+  DETRAY_HOST_DEVICE
+  constexpr void swap_candidates(std::size_t i, std::size_t k) {
+    const cache_entry_t tmp = m_candidates[i];
+    m_candidates[i] = m_candidates[k];
+    m_candidates[k] = tmp;
+  }
 
   /// @returns current/previous object that was reached
   DETRAY_HOST_DEVICE
@@ -522,9 +572,49 @@ class base_state {
     return this->candidate_at(m_next);
   }
 
+  /// @returns the full candidate at cache position @param i, rebuilding the
+  /// surface descriptor from the detector.
   DETRAY_HOST_DEVICE
   constexpr auto candidate_at(std::size_t i) const -> const candidate_t {
-    return m_candidates[i];
+    if constexpr (!k_packed_cache) {
+      return m_candidates[i];
+    } else {
+      const slim_candidate_t &slim = m_candidates[i];
+
+      // An empty slot has no surface to look up in the detector
+      if (detail::is_invalid_value(slim.sf_index)) [[unlikely]] {
+        candidate_t c{};
+        c.set_path(slim.path);
+        return c;
+      }
+
+      return candidate_t{m_detector->surface(slim.sf_index), slim.path,
+                         slim.volume_link, slim.status, slim.direction};
+    }
+  }
+
+  /// @returns the sort key of the candidate at @param i, without rebuilding
+  /// the surface descriptor
+  DETRAY_HOST_DEVICE
+  constexpr scalar_t path_at(std::size_t i) const {
+    if constexpr (k_packed_cache) {
+      return m_candidates[i].path;
+    } else {
+      return m_candidates[i].path();
+    }
+  }
+
+  /// @returns the surface index of the candidate at @param i, without
+  /// rebuilding the surface descriptor. Equal indices imply equal surfaces.
+  DETRAY_HOST_DEVICE
+  constexpr dindex sf_index_at(std::size_t i) const {
+    if constexpr (k_packed_cache) {
+      return m_candidates[i].sf_index;
+    } else {
+      const auto geo_id = m_candidates[i].surface().identifier();
+      return geo_id.is_invalid() ? detail::invalid_value<dindex>()
+                                 : geo_id.index();
+    }
   }
 
   /// Set the status to @param s
@@ -544,11 +634,14 @@ class base_state {
   /// Clear the state
   DETRAY_HOST_DEVICE
   constexpr void clear_cache() {
-    // Mark all data in the cache as unreachable
+    // Mark all data in the cache as unreachable. Only the sort key changes,
+    // so there is no need to rebuild and re-pack the full candidates.
     for (std::size_t i = 0u; i < k_cache_capacity; ++i) {
-      auto cand = this->candidate_at(i);
-      cand.set_path(std::numeric_limits<scalar_t>::max());
-      this->set_candidate_at(i, cand);
+      if constexpr (k_packed_cache) {
+        m_candidates[i].path = std::numeric_limits<scalar_t>::max();
+      } else {
+        m_candidates[i].set_path(std::numeric_limits<scalar_t>::max());
+      }
     }
     m_next = 0;
     m_last = -1;

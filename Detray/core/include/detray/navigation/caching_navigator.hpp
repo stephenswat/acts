@@ -101,9 +101,6 @@ class caching_navigator
 
     // Result of a geometry object evaluation
     using candidate_t = typename base_type::candidate_t;
-    using candidate_cache_t = typename base_type::candidate_cache_t;
-    using candidate_itr_t = typename base_type::candidate_itr_t;
-    using candidate_const_itr_t = typename base_type::candidate_const_itr_t;
     using dist_t = typename base_type::dist_t;
 
    public:
@@ -139,17 +136,17 @@ class caching_navigator
       const std::size_t beg{this->valid_begin()};
       const std::size_t end{this->valid_end()};
 
+      // Sorting only needs the path, so compare the keys directly instead of
+      // rebuilding candidates. The swap moves the packed cache entries.
       for (std::size_t i = beg; i + 1 < end; ++i) {
         std::size_t k = i;
         for (std::size_t j = i + 1; j < end; ++j) {
-          if (this->candidate_at(j) < this->candidate_at(k)) {
+          if (math::fabs(this->path_at(j)) < math::fabs(this->path_at(k))) {
             k = j;
           }
         }
         if (k != i) {
-          const candidate_t tmp = this->candidate_at(i);
-          this->set_candidate_at(i, this->candidate_at(k));
-          this->set_candidate_at(k, tmp);
+          this->swap_candidates(i, k);
         }
       }
     }
@@ -165,7 +162,9 @@ class caching_navigator
       std::size_t pos = beg;
       if constexpr (k_cache_capacity > 2u) {
         for (; pos < end; ++pos) {
-          if (this->candidate_at(pos) > new_candidate) {
+          // Same ordering as intersection2D::operator>, on the key alone
+          if (math::fabs(this->path_at(pos)) >
+              math::fabs(new_candidate.path())) {
             break;
           }
         }
@@ -194,8 +193,8 @@ class caching_navigator
 
       // Do not add the same surface (intersection) multiple times
       const auto is_overlap_at_pos = [this, &new_candidate](std::size_t index) {
-        return (math::fabs(this->candidate_at(index).path() -
-                           new_candidate.path()) <= 1.f * unit<scalar_t>::um);
+        return (math::fabs(this->path_at(index) - new_candidate.path()) <=
+                1.f * unit<scalar_t>::um);
       };
 
       // Make sure that surfaces don't appear multiple times in the navigation
@@ -204,10 +203,11 @@ class caching_navigator
       // surfaces appearing multiple times in the cache. If this appears too
       // often, the cache can contain only this surface, leading to the
       // navigator getting stuck on that surface.
+      // Equal surface indices imply equal identifiers, so the index is enough
       const auto is_clash_at_pos = [this, &new_candidate,
                                     &is_overlap_at_pos](std::size_t index) {
-        return (this->candidate_at(index).surface().identifier() ==
-                new_candidate.surface().identifier()) &&
+        return (this->sf_index_at(index) ==
+                new_candidate.surface().identifier().index()) &&
                is_overlap_at_pos(index);
       };
 
@@ -232,9 +232,10 @@ class caching_navigator
         idx = idx > shift_begin ? shift_begin : idx;
       }
 
+      // Shift the packed entries, no need to rebuild the candidates
       for (dist_t i = shift_begin; i >= idx; --i) {
         const auto j{static_cast<std::size_t>(i)};
-        this->set_candidate_at(j + 1, this->candidate_at(j));
+        this->move_candidate(j, j + 1u);
       }
 
       // Now insert the new candidate and update candidate range
