@@ -39,6 +39,7 @@ struct helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {
 
  public:
   using algebra_type = algebra_t;
+  using frame_type = cartesian2D<algebra_t>;
 
   template <typename surface_descr_t>
   using intersection_type =
@@ -118,6 +119,8 @@ struct helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {
 
 template <detray::concepts::aos algebra_t>
 struct helix_intersector_impl<polar2D<algebra_t>, algebra_t>
-    : public helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {};
+    : public helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {
+  using frame_type = polar2D<algebra_t>;
+};
 
 }  // namespace detray

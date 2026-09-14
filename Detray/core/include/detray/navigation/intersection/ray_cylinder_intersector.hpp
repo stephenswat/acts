@@ -63,8 +63,25 @@ struct ray_intersector_impl<cylindrical2D<algebra_t>, algebra_t, resolve_pos> {
       const trajectory_type<algebra_t> &ray, const dtransform3D<algebra_t> &trf,
       const mask_t &mask,
       const dscalar<algebra_t> /*overstep_tol*/ = 0.f) const {
+    return point_of_intersection(ray, trf, mask[mask_t::shape::e_r]);
+  }
+
+  /// Operator function to find intersections between ray and planar mask
+  ///
+  /// @param ray is the input ray trajectory
+  /// @param sf the surface handle the mask is associated with
+  /// @param mask is the input mask that defines the surface extent
+  /// @param trf is the surface placement transform
+  /// @param mask_tolerance is the tolerance for mask edges
+  /// @param overstep_tol negative cutoff for the path
+  ///
+  /// @return the intersection
+  DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
+      const trajectory_type<algebra_t> &ray, const dtransform3D<algebra_t> &trf,
+      const dscalar<algebra_t> radius,
+      const dscalar<algebra_t> /*overstep_tol*/ = 0.f) const {
     // One or both of these solutions might be invalid
-    const auto qe = solve_intersection(ray, mask, trf);
+    const auto qe = solve_intersection(ray, radius, trf);
 
     result_type results;
 
@@ -94,15 +111,14 @@ struct ray_intersector_impl<cylindrical2D<algebra_t>, algebra_t, resolve_pos> {
   /// cylinder in global coordinates.
   ///
   /// @returns a quadratic equation object that contains the solution(s).
-  template <typename mask_t>
   DETRAY_HOST_DEVICE inline detail::quadratic_equation<dscalar<algebra_t>>
-  solve_intersection(const trajectory_type<algebra_t> &ray, const mask_t &mask,
+  solve_intersection(const trajectory_type<algebra_t> &ray,
+                     const dscalar<algebra_t> r,
                      const dtransform3D<algebra_t> &trf) const {
     using scalar_t = dscalar<algebra_t>;
     using point3_t = dpoint3D<algebra_t>;
     using vector3_t = dvector3D<algebra_t>;
 
-    const scalar_t r{mask[mask_t::shape::e_r]};
     const vector3_t &sz = trf.z();
     const vector3_t &sc = trf.translation();
 

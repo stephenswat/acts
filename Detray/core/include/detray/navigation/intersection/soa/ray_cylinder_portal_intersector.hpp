@@ -35,6 +35,7 @@ struct ray_intersector_impl<concentric_cylindrical2D<algebra_t>, algebra_t,
   /// Linear algebra types
   /// @{
   using algebra_type = algebra_t;
+  using frame_type = concentric_cylindrical2D<algebra_t>;
   using value_type = dvalue<algebra_t>;
   using scalar_type = dscalar<algebra_t>;
   using point2_type = dpoint2D<algebra_t>;

@@ -32,6 +32,7 @@ struct ray_intersector_impl<cylindrical2D<algebra_t>, algebra_t, resolve_pos> {
   /// Linear algebra types
   /// @{
   using algebra_type = algebra_t;
+  using frame_type = cylindrical2D<algebra_t>;
   using scalar_type = dscalar<algebra_t>;
   using point3_type = dpoint3D<algebra_t>;
   using vector3_type = dvector3D<algebra_t>;

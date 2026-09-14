@@ -88,6 +88,8 @@ struct ray_intersector_impl<cartesian2D<algebra_t>, algebra_t, resolve_pos> {
 template <detray::concepts::aos algebra_t, bool resolve_pos>
 struct ray_intersector_impl<polar2D<algebra_t>, algebra_t, resolve_pos>
     : public ray_intersector_impl<cartesian2D<algebra_t>, algebra_t,
-                                  resolve_pos> {};
+                                  resolve_pos> {
+  using frame_type = polar2D<algebra_t>;
+};
 
 }  // namespace detray

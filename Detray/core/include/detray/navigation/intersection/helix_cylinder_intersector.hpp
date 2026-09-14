@@ -42,6 +42,7 @@ struct helix_intersector_impl<cylindrical2D<algebra_t>, algebra_t>
 
  public:
   using algebra_type = algebra_t;
+  using frame_type = cylindrical2D<algebra_t>;
 
   template <typename surface_descr_t>
   using intersection_type =
@@ -171,6 +172,7 @@ template <concepts::algebra algebra_t>
 struct helix_intersector_impl<concentric_cylindrical2D<algebra_t>, algebra_t>
     : public helix_intersector_impl<cylindrical2D<algebra_t>, algebra_t> {
   using algebra_type = algebra_t;
+  using frame_type = concentric_cylindrical2D<algebra_t>;
 
   template <typename surface_descr_t>
   using intersection_type =

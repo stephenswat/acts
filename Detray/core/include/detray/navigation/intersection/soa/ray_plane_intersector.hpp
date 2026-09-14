@@ -28,6 +28,7 @@ struct ray_intersector_impl<cartesian2D<algebra_t>, algebra_t, resolve_pos> {
   /// Linear algebra types
   /// @{
   using algebra_type = algebra_t;
+  using frame_type = cartesian2D<algebra_t>;
   using scalar_type = dscalar<algebra_t>;
   using point3_type = dpoint3D<algebra_t>;
   using vector3_type = dvector3D<algebra_t>;
@@ -85,6 +86,8 @@ struct ray_intersector_impl<cartesian2D<algebra_t>, algebra_t, resolve_pos> {
 template <detray::concepts::soa algebra_t, bool resolve_pos>
 struct ray_intersector_impl<polar2D<algebra_t>, algebra_t, resolve_pos>
     : public ray_intersector_impl<cartesian2D<algebra_t>, algebra_t,
-                                  resolve_pos> {};
+                                  resolve_pos> {
+  using frame_type = polar2D<algebra_t>;
+};
 
 }  // namespace detray

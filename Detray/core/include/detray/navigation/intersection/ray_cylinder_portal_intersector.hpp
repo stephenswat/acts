@@ -67,14 +67,34 @@ struct ray_intersector_impl<concentric_cylindrical2D<algebra_t>, algebra_t,
   /// @return the closest intersection
   template <typename mask_t>
   DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
+      const trajectory_type<algebra_t> &ray, const dtransform3D<algebra_t> &trf,
+      const mask_t &mask, const dscalar<algebra_t> overstep_tol = 0.f) const {
+    return point_of_intersection(ray, trf, mask[mask_t::shape::e_r],
+                                 overstep_tol);
+  }
+
+  /// Operator function to find intersections between ray and cylinder mask
+  ///
+  /// Intersecting the cylinder from the inside yields one intersection
+  /// along the direction of the track and one behind it. These intersections
+  /// can be calculated in a simplified way, since the cylinder cannot be
+  /// shifted or rotated. Solve: perp(ro + t * rd) = r_cyl
+  ///
+  /// @param ray is the input ray trajectory
+  /// @param sf the surface handle the mask is associated with
+  /// @param trf is the surface placement transform
+  /// @param mask_tolerance is the tolerance for mask edges
+  /// @param overstep_tol negative cutoff for the path
+  ///
+  /// @return the closest intersection
+  DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
       const trajectory_type<algebra_t> &ray,
-      const dtransform3D<algebra_t> & /*trf*/, const mask_t &mask,
+      const dtransform3D<algebra_t> & /*trf*/, const dscalar<algebra_t> r,
       const dscalar<algebra_t> overstep_tol = 0.f) const {
     using scalar_t = dscalar<algebra_t>;
     using point3_t = dpoint3D<algebra_t>;
     using vector3_t = dvector3D<algebra_t>;
 
-    const scalar_t r{mask[mask_t::shape::e_r]};
     constexpr scalar_t inv{detail::invalid_value<dvalue<algebra_t>>()};
 
     const point3_t &ro = ray.pos();

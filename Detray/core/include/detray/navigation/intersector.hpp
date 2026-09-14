@@ -75,6 +75,15 @@ struct intersector {
         ray, trf, mask, overstep_tol));
   }
 
+  template <typename mask_t, typename S = shape_t>
+    requires concepts::cylindrical_shape<S, algebra_type>
+  DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
+      const detail::ray<algebra_t> &ray, const transform3_type &trf,
+      const scalar_type radius, const scalar_type overstep_tol = 0.f) const {
+    return to_result_type(ray_intersector_type{}.point_of_intersection(
+        ray, trf, radius, overstep_tol));
+  }
+
   template <typename S = shape_t>
     requires(!concepts::cylindrical_shape<S, algebra_type>)
   DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
@@ -89,6 +98,15 @@ struct intersector {
       const detail::helix<algebra_t> &h, const transform3_type &trf,
       const mask_t &mask, const scalar_type /*overstep_tol*/ = 0.f) const {
     return helix_intersector_type{}.point_of_intersection(h, trf, mask);
+  }
+
+  template <typename mask_t, typename S = shape_t>
+    requires concepts::cylindrical_shape<S, algebra_type>
+  DETRAY_HOST_DEVICE constexpr result_type point_of_intersection(
+      const detail::helix<algebra_t> &h, const transform3_type &trf,
+      const scalar_type radius,
+      const scalar_type /*overstep_tol*/ = 0.f) const {
+    return helix_intersector_type{}.point_of_intersection(h, trf, radius);
   }
   /// @}
 
