@@ -49,7 +49,8 @@ struct intersection_initialize_get_radius {
 
 /// A functor to add all valid intersections between the trajectory and
 /// surface
-template <template <typename, typename, bool> class intersector_t>
+template <template <typename, typename, bool> class intersector_t,
+          bool contains_pos_v>
 struct intersection_initialize {
   /// Operator function to initialize intersections
   ///
@@ -82,11 +83,9 @@ struct intersection_initialize {
     using mask_t = typename mask_group_t::value_type;
     using shape_t = typename mask_t::shape;
     using algebra_t = typename mask_t::algebra_type;
-    using intersection_t = typename is_container_t::value_type;
 
     // Find the point of intersection with the underlying geometry
-    constexpr intersector_t<shape_t, algebra_t, intersection_t::contains_pos()>
-        intersector{};
+    constexpr intersector_t<shape_t, algebra_t, contains_pos_v> intersector{};
 
     constexpr std::uint8_t n_sol{decltype(intersector)::n_solutions};
 
@@ -104,50 +103,22 @@ struct intersection_initialize {
       // Resolve the masks that belong to the surface
       for (const auto &mask :
            detray::ranges::subrange(mask_group, mask_range)) {
-        intersection_t is{};
-
         // Build the resulting intersection(s) from the intersection point
         if constexpr (n_sol > 1) {
-          resolve_mask(is, traj, intersections[i], sf_desc, mask, ctf, cfg,
-                       external_mask_tolerance);
+          resolve_mask(is_container[i], traj, intersections[i], sf_desc, mask,
+                       ctf, cfg, external_mask_tolerance);
+          if (is_container[i].is_probably_inside()) {
+            break;
+          }
         } else {
-          resolve_mask(is, traj, intersections, sf_desc, mask, ctf, cfg,
-                       external_mask_tolerance);
-        }
-
-        if (is.is_probably_inside()) {
-          insert_sorted(is, is_container);
-          break;
+          resolve_mask(is_container, traj, intersections, sf_desc, mask, ctf,
+                       cfg, external_mask_tolerance);
+          if (is_container.is_probably_inside()) {
+            break;
+          }
         }
       }
     }
-  }
-
-  template <typename intersection_t, typename... allocator_t>
-  DETRAY_HOST_DEVICE void insert_sorted(
-      const intersection_t &sfi,
-      std::vector<intersection_t, allocator_t...> &intersections) const {
-    auto itr_pos =
-        detray::upper_bound(intersections.cbegin(), intersections.cend(), sfi);
-
-    intersections.insert(itr_pos, sfi);
-  }
-
-  /// Specialization for the navigation state cache
-  template <typename nav_state_t>
-  DETRAY_HOST_DEVICE void insert_sorted(
-      const typename nav_state_t::value_type &sfi,
-      nav_state_t &intersections) const {
-    auto itr_pos{intersections.cbegin()};
-
-    // For just two candidates int the cache, the navigation state keeps
-    // the first as the previously visited candidate -> no sorting needed
-    if constexpr (nav_state_t::capacity() > 2u) {
-      itr_pos = detray::upper_bound(intersections.cbegin(),
-                                    intersections.cend(), sfi);
-    }
-
-    intersections.insert(itr_pos, sfi);
   }
 };
 
@@ -180,7 +151,7 @@ struct intersection_initialize_surface_per_mask {
         intersector_constructor_t<shape_t, algebra_t, contains_pos_v>;
 
     if constexpr (std::same_as<local_intersector_t, intersector_t>) {
-      intersection_initialize<intersector_constructor_t>{}(
+      intersection_initialize<intersector_constructor_t, contains_pos_v>{}(
           mask_group, mask_range, is_container, traj, sf_desc, intersections,
           ctf, cfg, external_mask_tolerance);
     }
@@ -231,6 +202,12 @@ struct intersection_initialize_surface_per_intersector {
       }
     }
 
+    using single_output_t = typename is_container_t::value_type;
+    using output_t = std::conditional_t<(n_sol == 1), single_output_t,
+                                        single_output_t[n_sol]>;
+
+    output_t found_intersections{};
+
     // Keep in mind that this function body is called once for every
     // intersector type, not for every mask. What we will do now is call a
     // different per-mask function object for every mask type.
@@ -240,8 +217,47 @@ struct intersection_initialize_surface_per_intersector {
     // here knows what the intersector is.
     mask_store.template visit<intersection_initialize_surface_per_mask<
         intersector_constructor_t, contains_pos_v, intersector_t>>(
-        sf_desc.mask(), is_container, traj, _sf_desc, result, ctf, cfg,
+        sf_desc.mask(), found_intersections, traj, _sf_desc, result, ctf, cfg,
         external_mask_tolerance);
+
+    if constexpr (n_sol > 1) {
+      for (std::size_t i = 0u; i < n_sol; ++i) {
+        if (found_intersections[i].is_probably_inside()) {
+          insert_sorted(found_intersections[i], is_container);
+        }
+      }
+    } else {
+      if (found_intersections.is_probably_inside()) {
+        insert_sorted(found_intersections, is_container);
+      }
+    }
+  }
+
+  template <typename intersection_t, typename... allocator_t>
+  DETRAY_HOST_DEVICE void insert_sorted(
+      const intersection_t &sfi,
+      std::vector<intersection_t, allocator_t...> &intersections) const {
+    auto itr_pos =
+        detray::upper_bound(intersections.cbegin(), intersections.cend(), sfi);
+
+    intersections.insert(itr_pos, sfi);
+  }
+
+  /// Specialization for the navigation state cache
+  template <typename nav_state_t>
+  DETRAY_HOST_DEVICE void insert_sorted(
+      const typename nav_state_t::value_type &sfi,
+      nav_state_t &intersections) const {
+    auto itr_pos{intersections.cbegin()};
+
+    // For just two candidates int the cache, the navigation state keeps
+    // the first as the previously visited candidate -> no sorting needed
+    if constexpr (nav_state_t::capacity() > 2u) {
+      itr_pos = detray::upper_bound(intersections.cbegin(),
+                                    intersections.cend(), sfi);
+    }
+
+    intersections.insert(itr_pos, sfi);
   }
 };
 

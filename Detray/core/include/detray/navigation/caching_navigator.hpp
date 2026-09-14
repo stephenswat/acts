@@ -82,7 +82,10 @@ class caching_navigator
     friend class navigator_base<caching_navigator>;
 
     // Allow the filling of candidates
-    friend struct detail::intersection_initialize<ray_intersector>;
+    friend struct detail::intersection_initialize_surface_per_intersector<
+        ray_intersector, true>;
+    friend struct detail::intersection_initialize_surface_per_intersector<
+        ray_intersector, false>;
 
     // Navigation utility functions that need to modify the state
     template <typename state_t>
