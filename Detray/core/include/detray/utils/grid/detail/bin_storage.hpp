@@ -426,7 +426,9 @@ class bin_storage<is_owning, detray::bins::dynamic_array<entry_t>, containers>
   /// Move assignment
   bin_storage& operator=(bin_storage&&) noexcept = default;
 
+  DETRAY_HOST_DEVICE
   const bin_range_t& bin_data() const { return m_bin_data; }
+  DETRAY_HOST_DEVICE
   const entry_range_t& entry_data() const { return m_entry_data; }
 
   /// begin and end of the bin range

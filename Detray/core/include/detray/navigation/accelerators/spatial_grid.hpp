@@ -193,6 +193,77 @@ class spatial_grid_impl : public grid_t {
       const detector_t &det, const typename detector_t::volume_type &volume,
       const track_t &track, const search_window<window_size_t, 2> &win_size,
       const typename detector_t::geometry_context &ctx) const {
+    // Grid lookup
+    return search(lookup_position(det, volume, track, ctx), win_size);
+  }
+
+  /// Interface for the navigator: apply @param functor to every entry in the
+  /// search window around the track position
+  ///
+  /// Performs the same lookup as the navigator @c search, but runs an explicit
+  /// loop over the bins in the search window instead of building the bin view
+  /// and join ranges. The entries are visited in the same order.
+  template <concepts::detector detector_t, typename track_t,
+            concepts::arithmetic window_size_t, typename functor_t,
+            typename... Args>
+  DETRAY_HOST_DEVICE void visit_neighborhood(
+      const detector_t &det, const typename detector_t::volume_type &volume,
+      const track_t &track, const search_window<window_size_t, 2> &win_size,
+      const typename detector_t::geometry_context &ctx, functor_t &&functor,
+      Args &&...args) const {
+    visit(lookup_position(det, volume, track, ctx), win_size,
+          std::forward<functor_t>(functor), std::forward<Args>(args)...);
+  }
+
+  /// Apply @param functor to every entry in the search window around the
+  /// local position @param p
+  ///
+  /// Visits the same entries in the same order as @c search(p, win_size)
+  template <concepts::arithmetic window_size_t, typename functor_t,
+            typename... Args>
+  DETRAY_HOST_DEVICE void visit(const query_type &p,
+                                const search_window<window_size_t, 2> &win_size,
+                                functor_t &&functor, Args &&...args) const {
+    // Bins in the search window: one index range per axis (upper index is
+    // exclusive, circular axes are not wrapped yet)
+    const auto bin_ranges = this->axes().bin_ranges(p, win_size);
+
+    // Direct access to the bin records and entries of dynamic bins
+    if constexpr (base_grid::dim == 2 &&
+                  requires { this->bins().entry_data(); }) {
+      const auto &bin_data = this->bins().bin_data();
+      const auto &entries = this->bins().entry_data();
+      const auto axis0 = this->template get_axis<0>();
+      const auto axis1 = this->template get_axis<1>();
+
+      // Same order as the cartesian product of the bin ranges: axis 0 is
+      // the outer loop
+      typename base_grid::loc_bin_index mbin{};
+      for (int i0 = bin_ranges[0][0]; i0 < bin_ranges[0][1]; ++i0) {
+        mbin[0] = map_bin_index(axis0, i0);
+        for (int i1 = bin_ranges[1][0]; i1 < bin_ranges[1][1]; ++i1) {
+          mbin[1] = map_bin_index(axis1, i1);
+
+          const auto &bin = bin_data[this->serialize(mbin)];
+          for (dindex k = 0u; k < bin.size; ++k) {
+            functor(entries[bin.offset + k], std::forward<Args>(args)...);
+          }
+        }
+      }
+    } else {
+      for (const auto &entry : search(p, win_size)) {
+        functor(entry, std::forward<Args>(args)...);
+      }
+    }
+  }
+
+ private:
+  /// @returns the grid local position at which to look up the track
+  template <concepts::detector detector_t, typename track_t>
+  DETRAY_HOST_DEVICE query_type lookup_position(
+      const detector_t &det, const typename detector_t::volume_type &volume,
+      const track_t &track,
+      const typename detector_t::geometry_context &ctx) const {
     // Placement of the grid (same as volume)
     const auto &trf = det.transform_store().at(volume.transform(), ctx);
 
@@ -216,11 +287,22 @@ class spatial_grid_impl : public grid_t {
       loc_pos = this->project(trf, track.pos(), track.dir());
     }
 
-    // Grid lookup
-    return search(loc_pos, win_size);
+    return loc_pos;
   }
 
- private:
+  /// @returns the local bin index for the (unwrapped) index @param ibin on
+  /// @param ax, i.e. the same mapping as the bin iterator of the bin view
+  template <typename axis_t>
+  DETRAY_HOST_DEVICE static constexpr dindex map_bin_index(const axis_t &ax,
+                                                           const int ibin) {
+    if constexpr (axis_t::bounds_type::type == axis::bounds::e_circular) {
+      return static_cast<dindex>(axis::circular<>{}.wrap(ibin, ax.nbins()));
+    } else {
+      // All other axes start with a range that is already mapped
+      return static_cast<dindex>(ibin);
+    }
+  }
+
   /// @returns a mask that has boundaries which match the grid axis spans
   template <typename... Args>
   DETRAY_HOST_DEVICE mask_type get_mask_from_axes(Args &&...mask_values) {
