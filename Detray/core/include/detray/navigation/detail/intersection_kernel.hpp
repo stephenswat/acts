@@ -261,6 +261,14 @@ struct intersection_initialize_surface_per_intersector {
   }
 };
 
+template <typename T>
+struct max_intersections_for_intersectors {};
+
+template <typename... Ts>
+struct max_intersections_for_intersectors<types::list<Ts...>> {
+  static constexpr auto value = std::max({Ts::n_solutions...});
+};
+
 /// Intersect a surface with a trajectory and add all valid intersections to
 /// the intersection container
 ///
