@@ -16,6 +16,7 @@
 #include "detray/geometry/concepts.hpp"
 #include "detray/navigation/intersection/intersection.hpp"
 #include "detray/navigation/intersection/intersection_config.hpp"
+#include "detray/navigation/intersection/intersector_base.hpp"
 #include "detray/tracks/ray.hpp"
 #include "detray/utils/concepts.hpp"
 #include "detray/utils/ranges.hpp"
@@ -48,90 +49,17 @@ struct intersection_initialize_get_radius {
   };
 };
 
-/// A functor to add all valid intersections between the trajectory and
-/// surface
-template <template <typename, typename, bool> class intersector_t,
-          bool contains_pos_v>
-struct intersection_initialize {
-  /// Operator function to initialize intersections
-  ///
-  /// @tparam mask_group_t is the input mask group type found by variadic
-  /// unrolling
-  /// @tparam is_container_t is the intersection container type
-  /// @tparam traj_t is the input trajectory type (e.g. ray or helix)
-  /// @tparam surface_t is the input surface type
-  /// @tparam transform_container_t is the input transform store type
-  ///
-  /// @param mask_group is the input mask group
-  /// @param is_container is the intersection container to be filled
-  /// @param traj is the input trajectory
-  /// @param surface is the input surface
-  /// @param contextual_transforms is the input transform container
-  /// @param mask_tolerance is the tolerance for mask size
-  /// @param overstep_tol negative cutoff for the path
-  ///
-  /// @return the number of valid intersections
-  template <typename mask_group_t, typename mask_range_t,
-            typename is_container_t, typename traj_t, typename surface_t,
-            typename intersection_result_t, typename transform_t,
-            concepts::scalar scalar_t>
-  DETRAY_HOST_DEVICE inline auto operator()(
-      const mask_group_t &mask_group, const mask_range_t &mask_range,
-      is_container_t &is_container, const traj_t &traj,
-      const surface_t &sf_desc, const intersection_result_t &intersections,
-      const transform_t &ctf, const intersection::config &cfg,
-      const scalar_t external_mask_tolerance = 0.f) const {
-    using mask_t = typename mask_group_t::value_type;
-    using shape_t = typename mask_t::shape;
-    using algebra_t = typename mask_t::algebra_type;
-
-    // Find the point of intersection with the underlying geometry
-    constexpr intersector_t<shape_t, algebra_t, contains_pos_v> intersector{};
-
-    constexpr std::uint8_t n_sol{decltype(intersector)::n_solutions};
-
-    for (std::size_t i = 0u; i < n_sol; ++i) {
-      if constexpr (concepts::subscriptable<intersection_result_t>) {
-        if (!intersections[i].is_valid()) [[unlikely]] {
-          continue;
-        }
-      } else {
-        if (!intersections.is_valid()) [[unlikely]] {
-          continue;
-        }
-      }
-
-      // Resolve the masks that belong to the surface
-      for (const auto &mask :
-           detray::ranges::subrange(mask_group, mask_range)) {
-        // Build the resulting intersection(s) from the intersection point
-        if constexpr (concepts::subscriptable<is_container_t>) {
-          if constexpr (concepts::subscriptable<intersection_result_t>) {
-            resolve_mask(is_container[i], traj, intersections[i], sf_desc, mask,
-                         ctf, cfg, external_mask_tolerance);
-          } else {
-            resolve_mask(is_container[i], traj, intersections, sf_desc, mask,
-                         ctf, cfg, external_mask_tolerance);
-          }
-          if (is_container[i].is_probably_inside()) {
-            break;
-          }
-        } else {
-          if constexpr (concepts::subscriptable<intersection_result_t>) {
-            resolve_mask(is_container, traj, intersections[i], sf_desc, mask,
-                         ctf, cfg, external_mask_tolerance);
-          } else {
-            resolve_mask(is_container, traj, intersections, sf_desc, mask, ctf,
-                         cfg, external_mask_tolerance);
-          }
-          if (is_container.is_probably_inside()) {
-            break;
-          }
-        }
-      }
-    }
+/// @returns the @param i -th element of @param t, or @param t itself if it
+/// holds a single element
+template <typename T>
+DETRAY_HOST_DEVICE constexpr decltype(auto) at_solution(T &t,
+                                                        const std::size_t i) {
+  if constexpr (concepts::subscriptable<T>) {
+    return (t[i]);
+  } else {
+    return (t);
   }
-};
+}
 
 template <template <typename, typename, bool> typename intersector_t,
           bool contains_pos_v>
@@ -141,19 +69,18 @@ struct select_intersector {
                              typename mask_t::algebra_type, contains_pos_v>;
 };
 
+/// A functor to check one intersection point against the masks of a surface.
+/// Only the mask types that belong to @tparam intersector_t are checked
 template <template <typename, typename, bool> class intersector_constructor_t,
           bool contains_pos_v, typename intersector_t>
 struct intersection_initialize_surface_per_mask {
-  template <typename mask_group_t, typename mask_range_t,
-            typename is_container_t, typename traj_t, typename surface_t,
-            typename intersection_result_t, typename transform_t,
-            concepts::scalar scalar_t>
-  DETRAY_HOST_DEVICE inline auto operator()(
+  template <typename mask_group_t, typename mask_range_t, typename mask_check_t,
+            typename traj_t, typename intersection_point_t,
+            typename transform_t, concepts::scalar scalar_t>
+  DETRAY_HOST_DEVICE inline void operator()(
       const mask_group_t &mask_group, const mask_range_t &mask_range,
-      is_container_t &is_container, const traj_t &traj,
-      const surface_t &sf_desc, const intersection_result_t &intersections,
-      const transform_t &ctf, const intersection::config &cfg,
-      const scalar_t external_mask_tolerance = 0.f) {
+      mask_check_t &check, const traj_t &traj, const intersection_point_t &ip,
+      const transform_t &ctf, const mask_tolerance<scalar_t> &tol) const {
     using mask_t = typename mask_group_t::value_type;
     using shape_t = typename mask_t::shape;
     using algebra_t = typename mask_t::algebra_type;
@@ -162,9 +89,17 @@ struct intersection_initialize_surface_per_mask {
         intersector_constructor_t<shape_t, algebra_t, contains_pos_v>;
 
     if constexpr (std::same_as<local_intersector_t, intersector_t>) {
-      intersection_initialize<intersector_constructor_t, contains_pos_v>{}(
-          mask_group, mask_range, is_container, traj, sf_desc, intersections,
-          ctf, cfg, external_mask_tolerance);
+      // Resolve the masks that belong to the surface
+      for (const auto &mask :
+           detray::ranges::subrange(mask_group, mask_range)) {
+        check =
+            check_intersection_mask<contains_pos_v>(traj, ip, mask, ctf, tol);
+
+        // Stop at the first mask that contains the intersection point
+        if (detray::detail::any_of(check.with_edge)) {
+          break;
+        }
+      }
     }
   }
 };
@@ -175,12 +110,12 @@ struct intersection_initialize_surface_per_intersector {
   template <typename intersector_t, typename mask_store_t, typename surface_t,
             typename is_container_t, typename traj_t, typename transform_t,
             concepts::scalar scalar_t>
-  DETRAY_HOST_DEVICE inline auto operator()(
+  DETRAY_HOST_DEVICE inline void operator()(
       const intersector_t &intersector, const mask_store_t &mask_store,
       const surface_t &sf_desc, is_container_t &is_container,
-      const traj_t &traj, const surface_t &_sf_desc, const transform_t &ctf,
+      const traj_t &traj, const transform_t &ctf,
       const intersection::config &cfg,
-      const scalar_t external_mask_tolerance = 0.f) {
+      const scalar_t external_mask_tolerance = 0.f) const {
     typename intersector_t::result_type result{};
 
     if constexpr (concepts::cylindrical_frame<
@@ -213,17 +148,44 @@ struct intersection_initialize_surface_per_intersector {
       }
     }
 
-    // Keep in mind that this function body is called once for every
-    // intersector type, not for every mask. What we will do now is call a
-    // different per-mask function object for every mask type.
-    //
-    // We need to be careful here, because we are already visiting every
-    // intersector type, so we must ensure that the function object we call
-    // here knows what the intersector is.
-    mask_store.template visit<intersection_initialize_surface_per_mask<
-        intersector_constructor_t, contains_pos_v, intersector_t>>(
-        sf_desc.mask(), is_container, traj, _sf_desc, result, ctf, cfg,
-        external_mask_tolerance);
+    using algebra_t = typename intersector_t::algebra_type;
+    using nav_link_t = typename types::front<
+        typename mask_store_t::value_types::type_list>::links_type;
+    using mask_check_t =
+        mask_check_result<algebra_t, nav_link_t, contains_pos_v>;
+
+    for (std::size_t i = 0u; i < n_sol; ++i) {
+      const auto &ip = at_solution(result, i);
+      auto &is = at_solution(is_container, i);
+
+      if (!ip.is_valid()) [[unlikely]] {
+        continue;
+      }
+
+      // Mask independent part: status and path check
+      if (!init_intersection(is, ip, cfg)) {
+        continue;
+      }
+
+      const mask_tolerance<scalar_t> tol =
+          mask_tolerances(sf_desc, ip, cfg, external_mask_tolerance);
+
+      // Keep in mind that this function body is called once for every
+      // intersector type, not for every mask. What we will do now is call a
+      // different per-mask function object for every mask type.
+      //
+      // We need to be careful here, because we are already visiting every
+      // intersector type, so we must ensure that the function object we call
+      // here knows what the intersector is.
+      mask_check_t check{};
+
+      mask_store.template visit<intersection_initialize_surface_per_mask<
+          intersector_constructor_t, contains_pos_v, intersector_t>>(
+          sf_desc.mask(), check, traj, ip, ctf, tol);
+
+      // Mask independent part: fill the intersection
+      finalize_intersection(is, ip, sf_desc, check);
+    }
   }
 };
 
@@ -314,8 +276,8 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
   // once for every intersector, rather than once for every mask.
   types::visit<registry_t, intersection_initialize_surface_per_intersector<
                                intersector_constructor_t, contains_pos>>(
-      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj,
-      sf_desc, ctf, cfg, external_mask_tolerance);
+      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj, ctf,
+      cfg, external_mask_tolerance);
 
   if constexpr (concepts::subscriptable<output_t>) {
     for (std::size_t i = 0u; i < max_n_results; ++i) {

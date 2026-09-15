@@ -151,6 +151,193 @@ struct intersector_base : public intersector_t {
   }
 };
 
+/// @brief Tolerances for the check of an intersection point against a mask
+template <concepts::scalar scalar_t>
+struct mask_tolerance {
+  /// Base tolerance on the mask boundaries
+  scalar_t base{0.f};
+  /// Additional tolerance given by the caller
+  scalar_t external{0.f};
+};
+
+/// @brief Result of the check of an intersection point against a mask
+///
+/// The type does not depend on the mask type, so that the check can be done
+/// in a mask specific context and be consumed in a mask independent one.
+template <concepts::algebra algebra_t, typename nav_link_t, bool contains_pos>
+struct mask_check_result {
+  /// Check with edge tolerance
+  dbool<algebra_t> with_edge{};
+  /// Precise check
+  dbool<algebra_t> inside{};
+  /// Volume link of the mask
+  nav_link_t volume_link{};
+};
+
+/// Specialization that also carries the local position on the surface
+template <concepts::algebra algebra_t, typename nav_link_t>
+struct mask_check_result<algebra_t, nav_link_t, true>
+    : public mask_check_result<algebra_t, nav_link_t, false> {
+  /// Local position on the surface (for debug evaluation)
+  dpoint3D<algebra_t> local{};
+};
+
+/// @brief Mask independent part of the mask resolution before the mask check
+///
+/// Sets the intersection status to outside and checks whether the path meets
+/// the overstepping tolerance.
+///
+/// @param [out] is the surface intersection
+/// @param [in] ip the intersection point
+/// @param [in] cfg the intersection configuration
+///
+/// @returns true if the intersection is valid and the mask check can proceed
+template <typename intersection_t, concepts::algebra algebra_t,
+          concepts::point point_t>
+DETRAY_HOST_DEVICE constexpr bool init_intersection(
+    intersection_t &is,
+    const intersection_point<algebra_t, point_t, intersection::contains_pos>
+        &ip,
+    const intersection::config &cfg) {
+  // Mask out solutions that don't meet the overstepping tolerance (SoA)
+  if constexpr (concepts::soa<algebra_t>) {
+    using status_t = typename intersection_t::status_type;
+
+    is.status()(is.path() < cfg.overstep_tolerance) =
+        static_cast<status_t>(intersection::status::e_outside);
+  } else {
+    is.set_status(intersection::status::e_outside);
+  }
+
+  // Build intersection struct from test trajectory, if the distance is valid
+  return !detray::detail::none_of(ip.path >= cfg.overstep_tolerance);
+}
+
+/// @brief Mask independent tolerances for the mask check
+///
+/// @param [in] sf_desc the surface descriptor
+/// @param [in] ip the intersection point
+/// @param [in] cfg the intersection configuration
+/// @param [in] external_mask_tolerance additional tolerance given by the caller
+///
+/// @returns the base and the external tolerance for the mask check
+template <typename surface_descr_t, concepts::algebra algebra_t,
+          concepts::point point_t, concepts::scalar scalar_t>
+DETRAY_HOST_DEVICE constexpr mask_tolerance<scalar_t> mask_tolerances(
+    const surface_descr_t sf_desc,
+    const intersection_point<algebra_t, point_t, intersection::contains_pos>
+        &ip,
+    const intersection::config &cfg, const scalar_t external_mask_tolerance) {
+  mask_tolerance<scalar_t> tol{};
+
+  // Tol.: scale with distance of surface to account for track bending
+  if (!sf_desc.is_portal() ||
+      cfg.min_mask_tolerance == std::numeric_limits<float>::max()) {
+    tol.external = external_mask_tolerance;
+    tol.base =
+        math::max(static_cast<scalar_t>(cfg.min_mask_tolerance),
+                  math::min(static_cast<scalar_t>(cfg.max_mask_tolerance),
+                            static_cast<scalar_t>(cfg.mask_tolerance_scalor) *
+                                math::fabs(ip.path)));
+  }
+
+  return tol;
+}
+
+/// @brief Mask dependent part of the mask resolution: check the intersection
+/// point against the mask
+///
+/// @tparam contains_pos whether the local position on the surface is needed
+///
+/// @param [in] traj the test trajectory that intersects the surface
+/// @param [in] ip the intersection point
+/// @param [in] mask the mask of the surface
+/// @param [in] trf the transform of the surface
+/// @param [in] tol the tolerances for the mask check
+///
+/// @returns the mask check result, independent of the mask type
+template <bool contains_pos, typename trajectory_t, concepts::algebra algebra_t,
+          concepts::point point_t, typename mask_t,
+          concepts::transform3D transform3_t, concepts::scalar scalar_t>
+DETRAY_HOST_DEVICE constexpr mask_check_result<
+    algebra_t, typename mask_t::links_type, contains_pos>
+check_intersection_mask(
+    const trajectory_t &traj,
+    const intersection_point<algebra_t, point_t, intersection::contains_pos>
+        &ip,
+    const mask_t &mask, const transform3_t &trf,
+    const mask_tolerance<scalar_t> &tol) {
+  mask_check_result<algebra_t, typename mask_t::links_type, contains_pos>
+      result{};
+
+  // Save local position for debug evaluation
+  if constexpr (contains_pos) {
+    // Global position on the surface
+    dpoint3D<algebra_t> glob_pos;
+    if constexpr (concepts::soa<algebra_t>) {
+      // The trajectory is given in AoS layout. Translate...
+      const auto &origin = traj.pos();
+      const auto &dir = traj.dir();
+
+      // Broadcast
+      const dvector3D<algebra_t> ro{origin[0], origin[1], origin[2]};
+      const dvector3D<algebra_t> rd{dir[0], dir[1], dir[2]};
+
+      glob_pos = ro + ip.path * rd;
+    } else {
+      // Works for any parameterized trajectory
+      glob_pos = traj.pos(ip.path);
+    }
+    result.local = mask_t::to_local_frame3D(trf, glob_pos, traj.dir(ip.path));
+  }
+
+  // Mask check results with and without external tolerance
+  typename mask_t::result_type mask_check{};
+
+  // Intersector provides specialized local point
+  if constexpr (std::same_as<point_t, dpoint2D<algebra_t>>) {
+    mask_check = mask.resolve(ip.point, tol.base, tol.external);
+  } else {
+    // Otherwise, let the shape transform the point to local
+    mask_check = mask.resolve(trf, ip.point, tol.base, tol.external);
+  }
+
+  result.with_edge = detray::get<check_type::e_with_edge>(mask_check);
+  result.inside = detray::get<check_type::e_precise>(mask_check);
+  result.volume_link = mask.volume_link();
+
+  return result;
+}
+
+/// @brief Mask independent part of the mask resolution after the mask check:
+/// fill the intersection
+///
+/// @param [out] is the surface intersection
+/// @param [in] ip the intersection point
+/// @param [in] sf_desc the surface descriptor
+/// @param [in] check the mask check result
+template <typename intersection_t, concepts::algebra algebra_t,
+          concepts::point point_t, typename surface_descr_t,
+          typename mask_check_t>
+DETRAY_HOST_DEVICE constexpr void finalize_intersection(
+    intersection_t &is,
+    const intersection_point<algebra_t, point_t, intersection::contains_pos>
+        &ip,
+    const surface_descr_t sf_desc, const mask_check_t &check) {
+  if constexpr (intersection_t::contains_pos()) {
+    is.set_local(check.local);
+  }
+
+  // Set the less strict status first, then overwrite with more strict
+  is.set_status_if(intersection::status::e_edge, check.with_edge);
+  is.set_status_if(intersection::status::e_inside, check.inside);
+
+  is.set_path(ip.path);
+  is.set_surface(sf_desc);
+  is.set_direction(!math::signbit(ip.path));
+  is.set_volume_link(check.volume_link);
+}
+
 /// @brief Fill an intersection with the result of the intersection alg.
 ///
 /// @param [out] sfi the surface intersection
@@ -171,78 +358,18 @@ DETRAY_HOST_DEVICE constexpr void resolve_mask(
     const surface_descr_t sf_desc, const mask_t &mask, const transform3_t &trf,
     const intersection::config &cfg = {},
     const scalar_t external_mask_tolerance = 0.f) {
-  // Mask out solutions that don't meet the overstepping tolerance (SoA)
-  if constexpr (concepts::soa<algebra_t>) {
-    using status_t = typename intersection_t::status_type;
-
-    is.status()(is.path() < cfg.overstep_tolerance) =
-        static_cast<status_t>(intersection::status::e_outside);
-  } else {
-    is.set_status(intersection::status::e_outside);
-  }
-
-  // Build intersection struct from test trajectory, if the distance is valid
-  if (detray::detail::none_of(ip.path >= cfg.overstep_tolerance)) {
+  if (!init_intersection(is, ip, cfg)) {
     // Not a valid intersection
     return;
   }
 
-  // Save local position for debug evaluation
-  if constexpr (intersection_t::contains_pos()) {
-    // Global position on the surface
-    dpoint3D<algebra_t> glob_pos;
-    if constexpr (concepts::soa<algebra_t>) {
-      // The trajectory is given in AoS layout. Translate...
-      const auto &origin = traj.pos();
-      const auto &dir = traj.dir();
+  const mask_tolerance<scalar_t> tol =
+      mask_tolerances(sf_desc, ip, cfg, external_mask_tolerance);
 
-      // Broadcast
-      const dvector3D<algebra_t> ro{origin[0], origin[1], origin[2]};
-      const dvector3D<algebra_t> rd{dir[0], dir[1], dir[2]};
+  const auto check = check_intersection_mask<intersection_t::contains_pos()>(
+      traj, ip, mask, trf, tol);
 
-      glob_pos = ro + ip.path * rd;
-    } else {
-      // Works for any parameterized trajectory
-      glob_pos = traj.pos(ip.path);
-    }
-    is.set_local(mask_t::to_local_frame3D(trf, glob_pos, traj.dir(ip.path)));
-  }
-
-  scalar_t base_tol = 0.f;
-  scalar_t ext_tol = 0.f;
-
-  // Tol.: scale with distance of surface to account for track bending
-  if (!sf_desc.is_portal() ||
-      cfg.min_mask_tolerance == std::numeric_limits<float>::max()) {
-    ext_tol = external_mask_tolerance;
-    base_tol =
-        math::max(static_cast<scalar_t>(cfg.min_mask_tolerance),
-                  math::min(static_cast<scalar_t>(cfg.max_mask_tolerance),
-                            static_cast<scalar_t>(cfg.mask_tolerance_scalor) *
-                                math::fabs(ip.path)));
-  }
-
-  // Mask check results with and without external tolerance
-  typename mask_t::result_type mask_check{};
-
-  // Intersector provides specialized local point
-  if constexpr (std::same_as<point_t, dpoint2D<algebra_t>>) {
-    mask_check = mask.resolve(ip.point, base_tol, ext_tol);
-  } else {
-    // Otherwise, let the shape transform the point to local
-    mask_check = mask.resolve(trf, ip.point, base_tol, ext_tol);
-  }
-
-  // Set the less strict status first, then overwrite with more strict
-  is.set_status_if(intersection::status::e_edge,
-                   detray::get<check_type::e_with_edge>(mask_check));
-  is.set_status_if(intersection::status::e_inside,
-                   detray::get<check_type::e_precise>(mask_check));
-
-  is.set_path(ip.path);
-  is.set_surface(sf_desc);
-  is.set_direction(!math::signbit(ip.path));
-  is.set_volume_link(mask.volume_link());
+  finalize_intersection(is, ip, sf_desc, check);
 }
 
 }  // namespace detray
