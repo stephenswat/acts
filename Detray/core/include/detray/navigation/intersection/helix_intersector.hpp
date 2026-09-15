@@ -13,6 +13,7 @@
 #include "detray/navigation/intersection/helix_cylinder_intersector.hpp"
 #include "detray/navigation/intersection/helix_line_intersector.hpp"
 #include "detray/navigation/intersection/helix_plane_intersector.hpp"
+#include "detray/navigation/intersection/intersection_frame.hpp"
 #include "detray/navigation/intersection/intersector_base.hpp"
 
 namespace detray {
@@ -30,6 +31,8 @@ struct helix_intersector_impl {};
 
 template <typename shape_t, concepts::algebra algebra_t, bool = true>
 using helix_intersector = intersector_base<helix_intersector_impl<
-    typename shape_t::template local_frame_type<algebra_t>, algebra_t>>;
+    detail::intersection_frame_t<
+        typename shape_t::template local_frame_type<algebra_t>>,
+    algebra_t>>;
 
 }  // namespace detray

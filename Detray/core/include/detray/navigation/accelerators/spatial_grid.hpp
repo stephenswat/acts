@@ -106,7 +106,8 @@ class spatial_grid_impl : public grid_t {
     // Intersect the (virtual) reference surface of the grid to find
     // the correct bin
     using intersector_t =
-        ray_intersector_impl<frame_t, algebra_t, intersection::contains_pos>;
+        ray_intersector_impl<detray::detail::intersection_frame_t<frame_t>,
+                             algebra_t, intersection::contains_pos>;
 
     constexpr intersector_t intersector{};
     typename intersector_t::result_type result{};

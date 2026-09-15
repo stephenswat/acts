@@ -59,14 +59,15 @@ GTEST_TEST(detray_utils, mapped_type_registry) {
   //
   constexpr auto idx_array = mapped_registry_t::index_map();
 
-  static_assert(mapped_registry_t::n_types == 3u);
-  static_assert(types::size<mapped_registry_t> == 3u);
+  // The rectangle, trapezoid and ring shapes share the plane intersector
+  static_assert(mapped_registry_t::n_types == 2u);
+  static_assert(types::size<mapped_registry_t> == 2u);
   static_assert(idx_array.size() == 4u);
 
   EXPECT_EQ(idx_array[0u], 0u);
   EXPECT_EQ(idx_array[1u], 0u);
   EXPECT_EQ(idx_array[2u], 1u);
-  EXPECT_EQ(idx_array[3u], 2u);
+  EXPECT_EQ(idx_array[3u], 0u);
 
   using rectangle_t = types::get<mask_types, mask_id::e_rectangle2D>;
   using trapezoid_t = types::get<mask_types, mask_id::e_trapezoid2D>;
@@ -76,7 +77,7 @@ GTEST_TEST(detray_utils, mapped_type_registry) {
   static_assert(types::position<mapped_registry_t, rectangle_t> == 0u);
   static_assert(types::position<mapped_registry_t, trapezoid_t> == 0u);
   static_assert(types::position<mapped_registry_t, cylinder_t> == 1u);
-  static_assert(types::position<mapped_registry_t, disc_t> == 2u);
+  static_assert(types::position<mapped_registry_t, disc_t> == 0u);
 
   using cyl_intersector_t =
       types::get<mapped_registry_t, mask_id::e_concentric_cylinder2D>;
@@ -120,7 +121,7 @@ GTEST_TEST(detray_utils, mapped_type_registry) {
   static_assert(types::position<mapped_registry_t, rect_intersector_t> == 0u);
   static_assert(types::position<mapped_registry_t, trpz_intersector_t> == 0u);
   static_assert(types::position<mapped_registry_t, cyl_intersector_t> == 1u);
-  static_assert(types::position<mapped_registry_t, ring_intersector_t> == 2u);
+  static_assert(types::position<mapped_registry_t, ring_intersector_t> == 0u);
 
   //
   // Test the registry
@@ -145,11 +146,11 @@ GTEST_TEST(detray_utils, mapped_type_registry) {
   static_assert(types::id<mapped_registry_t, rect_intersector_t> ==
                     mask_id::e_rectangle2D,
                 "ID for type rectangle intersector incorrect");
-  static_assert(
-      types::id<mapped_registry_t, ring_intersector_t> == mask_id::e_ring2D,
-      "ID for type ring intersector incorrect");
   // From the point of view of the mapped registry, this is the same as for
   // the rectangle shape
+  static_assert(types::id<mapped_registry_t, ring_intersector_t> ==
+                    mask_id::e_rectangle2D,
+                "ID for type ring intersector incorrect");
   static_assert(types::id<mapped_registry_t, trpz_intersector_t> ==
                     mask_id::e_rectangle2D,
                 "ID for type trapezoid intersector incorrect");

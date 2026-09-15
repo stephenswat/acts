@@ -117,10 +117,4 @@ struct helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {
   bool run_rtsafe{true};
 };
 
-template <detray::concepts::aos algebra_t>
-struct helix_intersector_impl<polar2D<algebra_t>, algebra_t>
-    : public helix_intersector_impl<cartesian2D<algebra_t>, algebra_t> {
-  using frame_type = polar2D<algebra_t>;
-};
-
 }  // namespace detray
