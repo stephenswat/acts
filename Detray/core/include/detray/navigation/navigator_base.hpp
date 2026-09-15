@@ -53,27 +53,13 @@ class navigator_base {
   /// @param cfg the navigation configuration
   /// @param ctx the geometry context
   ///
-  /// @returns the local navigation that has to follow, if any
+  /// @returns whether the navigation is alive after the initialization
   template <typename track_t, typename nav_state_t, typename context_t>
-  DETRAY_HOST_DEVICE constexpr navigation::request init(
-      const track_t &track, nav_state_t &navigation,
-      const navigation::config &cfg, const context_t &ctx) const {
-    // Run local navigation in the current volume
-    perform(navigation::request::e_init, track, navigation, cfg, ctx);
-
-    DETRAY_VERBOSE_HOST("Status: " << navigation.status() << " (next sf.: "
-                                   << navigation.next_surface().index() << ")");
-    if (navigation.is_on_surface()) {
-      DETRAY_VERBOSE_HOST("-> Current surface: "
-                          << navigation.current_surface().index()
-                          << ", has material: " << std::boolalpha
-                          << navigation.current_surface().has_material()
-                          << std::noboolalpha);
-    }
-    DETRAY_VERBOSE_HOST_DEVICE("Update complete: dist to next %f mm",
-                               navigation());
-
-    return next_request(navigation, navigation::request::e_init);
+  DETRAY_HOST_DEVICE constexpr bool init(const track_t &track,
+                                         nav_state_t &navigation,
+                                         const navigation::config &cfg,
+                                         const context_t &ctx) const {
+    return update(track, navigation, cfg, ctx, navigation::request::e_init);
   }
 
   /// @brief Complete update of the navigation flow.
@@ -83,6 +69,8 @@ class navigator_base {
   /// when the previous update according to the given trust level
   /// failed to restore trust, it performs a complete reinitialization of the
   /// navigation. Runs all local navigations that @c update_cache requests.
+  /// If a local navigation is requested by the caller (@param first), it is
+  /// run in place of the cache update, e.g. to initialize the navigation.
   ///
   /// @tparam track_t type of track, needs to provide pos() and dir() methods
   ///
@@ -90,16 +78,21 @@ class navigator_base {
   /// @param state the current navigation state
   /// @param cfg the navigation configuration
   /// @param ctx the geometry context
+  /// @param first local navigation to run instead of the cache update
   ///
   /// @returns a heartbeat to indicate if the navigation is still alive
   template <typename track_t, typename nav_state_t, typename context_t>
   DETRAY_HOST_DEVICE DETRAY_INLINE constexpr bool update(
       const track_t &track, nav_state_t &navigation,
-      const navigation::config &cfg, const context_t &ctx) const {
+      const navigation::config &cfg, const context_t &ctx,
+      const navigation::request first = navigation::request::e_none) const {
     using enum navigation::request;
 
-    const navigation::update_result res =
-        update_cache(track, navigation, cfg, ctx);
+    // Restore the trust in the cache, unless a local navigation is due anyway
+    navigation::update_result res{first, false};
+    if (first == e_none) {
+      res = update_cache(track, navigation, cfg, ctx);
+    }
     bool is_init = res.is_init;
 
     // Run the local navigations that are needed to complete the update
@@ -254,20 +247,23 @@ class navigator_base {
       const nav_state_t &navigation, const navigation::request last) const {
     using enum navigation::request;
 
-    // Nothing follows the initial navigation, or the end of the detector
-    if (last == e_init || !navigation.is_alive()) {
+    // Nothing follows the end of the detector
+    if (!navigation.is_alive()) {
       return e_none;
     }
-    // If we encountered a portal, perform volume switch
-    if ((last == e_none || last == e_re_init) && navigation.is_on_portal()) {
-      return e_volume_switch;
-    }
-    // If no trust could be restored during the update, try to rescue the
-    // navigation stream by re-initializing with loose tolerances
-    if (last != e_loose_re_init &&
-        (navigation.trust_level() != navigation::trust_level::e_full ||
-         navigation.cache_exhausted())) {
-      return e_loose_re_init;
+    // Nothing follows the initial navigation, either
+    if (last != e_init) {
+      // If we encountered a portal, perform volume switch
+      if ((last == e_none || last == e_re_init) && navigation.is_on_portal()) {
+        return e_volume_switch;
+      }
+      // If no trust could be restored during the update, try to rescue the
+      // navigation stream by re-initializing with loose tolerances
+      if (last != e_loose_re_init &&
+          (navigation.trust_level() != navigation::trust_level::e_full ||
+           navigation.cache_exhausted())) {
+        return e_loose_re_init;
+      }
     }
 
     DETRAY_VERBOSE_HOST("Status: " << navigation.status() << " (vol.:"

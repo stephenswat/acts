@@ -11,6 +11,7 @@
 // Project include(s).
 #include "detray/definitions/detail/macros.hpp"
 #include "detray/definitions/detail/qualifiers.hpp"
+#include "detray/definitions/navigation.hpp"
 #include "detray/navigation/intersection/intersection.hpp"
 #include "detray/propagator/actor_chain.hpp"
 #include "detray/propagator/base_stepper.hpp"
@@ -267,33 +268,42 @@ struct propagator {
 
     DETRAY_VERBOSE_HOST("Starting propagation for track:\n" << track);
 
-    bool is_init = false;
+    // Initialize the navigation on the first navigation update, unless the
+    // propagation is resumed
+    navigation::request first_nav{navigation::request::e_none};
     if (this->is_paused(propagation)) {
       DETRAY_VERBOSE_HOST("Resuming propagation...");
     } else {
-      // Initialize the navigation
       DETRAY_VERBOSE_HOST("Initialize navigation...");
-      m_navigator.init(track, navigation, m_cfg.navigation, context);
-      propagation.heartbeat(navigation.is_alive());
-
-      is_init = true;
+      first_nav = navigation::request::e_init;
+      propagation.heartbeat(true);
     }
 
     // Run while there is a heartbeat. In order to help the compiler
     // optimize this, and in order to make the code more GPU-friendly,
     // this code is run as a flat loop, but this loop has a defined
-    // structure. Indeed, the structure is always to run either the
-    // actors or the stepper (in alternating order) followed by the
-    // navigation update.
+    // structure. Indeed, the structure is always to run the navigation
+    // update, followed by either the actors or the stepper (in alternating
+    // order).
     //
     // A = actors
     // N = navigation update
     // S = propagation step
     //
-    // ANSNANSNANSNANSNANSNANS...
+    // NANSNANSNANSNANSNANSNANS...
     scalar_type path_length{0.f};
     unsigned int stall_counter{0u};
-    for (unsigned int i = 0; i % 2 == 0 || propagation.is_alive(); ++i) {
+    bool is_init = false;
+    for (unsigned int i = 0;; ++i) {
+      // Find next candidate
+      DETRAY_VERBOSE_HOST("Calling navigator...");
+      const bool nav_is_init = m_navigator.update(
+          track, navigation, m_cfg.navigation, context,
+          (i == 0) ? first_nav : navigation::request::e_none);
+      is_init = is_init || nav_is_init;
+
+      propagation.heartbeat(propagation.heartbeat() && navigation.is_alive());
+
       if (i % 2 == 0) {
         DETRAY_VERBOSE_HOST_DEVICE("Propagation step: %d", i / 2);
         DETRAY_VERBOSE_HOST_DEVICE("-> Path length: %f mm",
@@ -304,13 +314,22 @@ struct propagator {
 
         // Don't run another navigation update, if already exited
         if (!propagation.is_alive()) {
-          continue;
+          break;
         }
 
         path_length = stepping.path_length();
 
         assert(!track.is_invalid());
       } else {
+        if (i > 1 && propagation.debug()) {
+          DETRAY_VERBOSE_HOST(print(propagation));
+        }
+
+        // Don't take another step, if already exited
+        if (!propagation.is_alive()) {
+          break;
+        }
+
         assert(!track.is_invalid());
 
         // Set access to the volume material for the stepper
@@ -348,9 +367,7 @@ struct propagator {
         DETRAY_VERBOSE_HOST("-> Evaluate stepper navigation policy:");
         typename stepper_t::policy_type{}(stepping.policy_state(), propagation);
 
-        if (i > 0) {
-          is_init = false;
-        }
+        is_init = false;
 
         // Check if the propagation makes progress
         if (math::fabs(stepping.path_length()) <=
@@ -376,18 +393,6 @@ struct propagator {
         } else {
           stall_counter = 0u;
         }
-      }
-
-      // Find next candidate
-      DETRAY_VERBOSE_HOST("Calling navigator...");
-      const bool nav_is_init =
-          m_navigator.update(track, navigation, m_cfg.navigation, context);
-      is_init = is_init || nav_is_init;
-
-      propagation.heartbeat(propagation.heartbeat() && navigation.is_alive());
-
-      if (i % 2 == 0 && i > 0 && propagation.debug()) {
-        DETRAY_VERBOSE_HOST(print(propagation));
       }
     }
 
