@@ -107,11 +107,12 @@ struct intersect_surface_per_mask {
 template <template <typename, typename, bool> class intersector_constructor_t,
           bool contains_pos_v>
 struct intersect_surface_per_intersector {
-  template <typename intersector_t, typename mask_store_t, typename surface_t,
-            typename is_container_t, typename traj_t, typename transform_t,
-            concepts::scalar scalar_t>
+  template <typename intersector_t, typename mask_store_t,
+            typename mask_range_t, typename surface_t, typename is_container_t,
+            typename traj_t, typename transform_t, concepts::scalar scalar_t>
   DETRAY_HOST_DEVICE inline void operator()(
       const intersector_t &intersector, const mask_store_t &mask_store,
+      const typename mask_store_t::ids mask_id, const mask_range_t mask_range,
       const surface_t &sf_desc, is_container_t &is_container,
       const traj_t &traj, const transform_t &ctf,
       const intersection::config &cfg,
@@ -121,8 +122,8 @@ struct intersect_surface_per_intersector {
     if constexpr (concepts::cylindrical_frame<
                       typename intersector_t::frame_type>) {
       const auto radius =
-          mask_store.template visit<intersect_surface_get_radius>(
-              sf_desc.mask());
+          mask_store.template visit<intersect_surface_get_radius>(mask_id,
+                                                                  mask_range);
       result = intersector.point_of_intersection(traj, ctf, radius,
                                                  cfg.overstep_tolerance);
     } else {
@@ -178,7 +179,7 @@ struct intersect_surface_per_intersector {
 
       mask_store.template visit<intersect_surface_per_mask<
           intersector_constructor_t, contains_pos_v, intersector_t>>(
-          sf_desc.mask(), check, traj, ip, ctf, tol);
+          mask_id, mask_range, check, traj, ip, ctf, tol);
 
       // Mask independent part: fill the intersection
       finalize_intersection(is, ip, sf_desc, check);
@@ -271,6 +272,12 @@ DETRAY_HOST_DEVICE inline void intersect_surface(
   using registry_t = intersect_surface_registry_t<intersector_constructor_t,
                                                   mask_store_t, intersection_t>;
 
+  // Decode the mask link once and pass the id and the range down, so that
+  // the link is not re-read from the surface descriptor in every visit
+  const auto mask_link = sf_desc.mask();
+  const auto mask_id = mask_link.id();
+  const auto mask_range = mask_link.index();
+
   // We could, naively, visit the mask store directly, but the intersection
   // initializer does a lot of non-mask-dependent work. Compiling it once per
   // mask generates a lot of unwanted code. Instead, we visit the intersectors
@@ -279,8 +286,8 @@ DETRAY_HOST_DEVICE inline void intersect_surface(
   types::visit<registry_t,
                intersect_surface_per_intersector<
                    intersector_constructor_t, intersection_t::contains_pos()>>(
-      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj, ctf,
-      cfg, external_mask_tolerance);
+      mask_id, mask_store, mask_id, mask_range, sf_desc, found_intersections,
+      traj, ctf, cfg, external_mask_tolerance);
 }
 
 /// Intersect a surface with a trajectory and add all valid intersections to

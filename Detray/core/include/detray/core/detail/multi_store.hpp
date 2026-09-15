@@ -337,6 +337,13 @@ class multi_store {
         static_cast<std::size_t>(id), std::forward<Args>(args)...);
   }
 
+  /// @copydoc visit(const ID, Args &&...)
+  template <typename functor_t, typename... Args>
+  DETRAY_HOST_DEVICE decltype(auto) visit(const ID id, Args &&...args) const {
+    return m_tuple_container.template visit<functor_t>(
+        static_cast<std::size_t>(id), std::forward<Args>(args)...);
+  }
+
   /// Calls a functor with a specific element of a data collection
   /// (given by a link).
   ///
