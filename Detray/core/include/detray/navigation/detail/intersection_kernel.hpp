@@ -95,8 +95,10 @@ struct intersect_surface_per_mask {
         check =
             check_intersection_mask<contains_pos_v>(traj, ip, mask, ctf, tol);
 
-        // Stop at the first mask that contains the intersection point
-        if (detray::detail::any_of(check.with_edge)) {
+        // Stop at the first mask that contains the intersection point (the
+        // edge check is only performed if an edge tolerance is given)
+        if (detray::detail::any_of(check.inside) ||
+            detray::detail::any_of(check.with_edge)) {
           break;
         }
       }
@@ -266,7 +268,7 @@ template <template <typename, typename, bool> class intersector_constructor_t,
           typename surface_t, typename transform_t, concepts::scalar scalar_t>
 DETRAY_HOST_DEVICE inline void intersect_surface(
     const mask_store_t &mask_store, output_t &found_intersections,
-    const traj_t &traj, const surface_t &sf_desc, const transform_t &ctf,
+    const traj_t &traj, const surface_t sf_desc, const transform_t &ctf,
     const intersection::config &cfg, const scalar_t external_mask_tolerance) {
   using intersection_t = std::remove_extent_t<output_t>;
   using registry_t = intersect_surface_registry_t<intersector_constructor_t,
