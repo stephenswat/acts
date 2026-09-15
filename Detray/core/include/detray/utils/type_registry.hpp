@@ -370,6 +370,18 @@ inline constexpr std::size_t index_cast =
 
 /// @}
 
+/// @returns true if the original type index @param idx is mapped to the
+/// filtered type position @tparam target
+///
+/// All lookups into the index map happen at compile time, so that the
+/// comparison against @param idx is done with immediates only.
+template <concepts::mapped_type_registry registry_t, std::size_t target,
+          std::size_t... orig>
+DETRAY_HOST_DEVICE constexpr bool maps_to(const std::size_t idx,
+                                          std::index_sequence<orig...>) {
+  return (((registry_t::index_map()[orig] == target) && (idx == orig)) || ...);
+}
+
 /// Variadic unrolling of the tuple that calls a functor on the element that
 /// corresponds to @param idx.
 ///
@@ -392,7 +404,10 @@ DETRAY_HOST_DEVICE constexpr decltype(auto) visit_helper(
     Args&&... args) {
   // Check if the current tuple index is matched to the target index
   if constexpr (concepts::mapped_type_registry<registry_t>) {
-    if (registry_t::mapped_index(idx) == current_idx) {
+    using orig_seq_t =
+        std::make_index_sequence<types::size<typename registry_t::orig_types>>;
+
+    if (maps_to<registry_t, current_idx>(idx, orig_seq_t{})) {
       return functor_t{}(types::at<registry_t, current_idx>{},
                          std::forward<Args>(args)...);
     }
