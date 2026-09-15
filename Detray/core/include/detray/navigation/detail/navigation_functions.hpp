@@ -98,13 +98,10 @@ DETRAY_HOST_DEVICE DETRAY_INLINE constexpr bool update_candidate(
     return false;
   }
 
-  const auto sf = detray::geometry::surface{det, candidate.surface()};
-
   // Perform intersection and check whether this candidate is reachable by
   // the track
-  return sf.template visit_mask<
-      detray::detail::intersection_update<ray_intersector>>(
-      tangential, candidate, det.transform_store(), ctx, cfg,
+  return detray::detail::intersection_update_surface<ray_intersector>(
+      det.mask_store(), tangential, candidate, det.transform_store(), ctx, cfg,
       external_mask_tolerance);
 }
 

@@ -24,7 +24,7 @@
 
 namespace detray::detail {
 
-struct intersection_initialize_get_radius {
+struct intersect_surface_get_radius {
   template <typename mask_group_t, typename mask_range_t>
   DETRAY_HOST_DEVICE inline auto operator()(
       const mask_group_t &mask_group, const mask_range_t &mask_range) const {
@@ -73,7 +73,7 @@ struct select_intersector {
 /// Only the mask types that belong to @tparam intersector_t are checked
 template <template <typename, typename, bool> class intersector_constructor_t,
           bool contains_pos_v, typename intersector_t>
-struct intersection_initialize_surface_per_mask {
+struct intersect_surface_per_mask {
   template <typename mask_group_t, typename mask_range_t, typename mask_check_t,
             typename traj_t, typename intersection_point_t,
             typename transform_t, concepts::scalar scalar_t>
@@ -106,7 +106,7 @@ struct intersection_initialize_surface_per_mask {
 
 template <template <typename, typename, bool> class intersector_constructor_t,
           bool contains_pos_v>
-struct intersection_initialize_surface_per_intersector {
+struct intersect_surface_per_intersector {
   template <typename intersector_t, typename mask_store_t, typename surface_t,
             typename is_container_t, typename traj_t, typename transform_t,
             concepts::scalar scalar_t>
@@ -121,7 +121,7 @@ struct intersection_initialize_surface_per_intersector {
     if constexpr (concepts::cylindrical_frame<
                       typename intersector_t::frame_type>) {
       const auto radius =
-          mask_store.template visit<intersection_initialize_get_radius>(
+          mask_store.template visit<intersect_surface_get_radius>(
               sf_desc.mask());
       result = intersector.point_of_intersection(traj, ctf, radius,
                                                  cfg.overstep_tolerance);
@@ -158,12 +158,9 @@ struct intersection_initialize_surface_per_intersector {
       const auto &ip = at_solution(result, i);
       auto &is = at_solution(is_container, i);
 
-      if (!ip.is_valid()) [[unlikely]] {
-        continue;
-      }
-
-      // Mask independent part: status and path check
-      if (!init_intersection(is, ip, cfg)) {
+      // Mask independent part: status and path check (an invalid solution
+      // leaves the intersection marked as outside)
+      if (!init_intersection(is, ip, cfg) || !ip.is_valid()) [[unlikely]] {
         continue;
       }
 
@@ -179,7 +176,7 @@ struct intersection_initialize_surface_per_intersector {
       // here knows what the intersector is.
       mask_check_t check{};
 
-      mask_store.template visit<intersection_initialize_surface_per_mask<
+      mask_store.template visit<intersect_surface_per_mask<
           intersector_constructor_t, contains_pos_v, intersector_t>>(
           sf_desc.mask(), check, traj, ip, ctf, tol);
 
@@ -223,6 +220,69 @@ DETRAY_HOST_DEVICE void insert_sorted(
   intersections.insert(itr_pos, sfi);
 }
 
+/// Type registry of the intersectors that are needed for the mask types in
+/// @tparam mask_store_t
+template <template <typename, typename, bool> class intersector_constructor_t,
+          typename mask_store_t, typename intersection_t>
+using intersect_surface_registry_t =
+    types::mapped_registry<typename mask_store_t::value_types,
+                           select_intersector<intersector_constructor_t,
+                                              intersection_t::contains_pos()>>;
+
+/// Maximum number of intersections that a surface in @tparam mask_store_t can
+/// produce
+template <template <typename, typename, bool> class intersector_constructor_t,
+          typename mask_store_t, typename intersection_t>
+inline constexpr std::size_t intersect_surface_max_n_results =
+    max_intersections_for_intersectors<typename intersect_surface_registry_t<
+        intersector_constructor_t, mask_store_t,
+        intersection_t>::type_list>::value;
+
+/// One intersection per solution: a single intersection or an array of them
+template <template <typename, typename, bool> class intersector_constructor_t,
+          typename mask_store_t, typename intersection_t>
+using intersect_surface_output_t = std::conditional_t<
+    (intersect_surface_max_n_results<intersector_constructor_t, mask_store_t,
+                                     intersection_t> == 1),
+    intersection_t,
+    intersection_t[intersect_surface_max_n_results<
+        intersector_constructor_t, mask_store_t, intersection_t>]>;
+
+/// Intersect a surface with a trajectory and write one intersection per
+/// solution into @param found_intersections
+///
+/// @tparam intersector_constructor_t is the intersector template to be used
+///
+/// @param mask_store is the mask store that holds the surface masks
+/// @param found_intersections the intersection(s) to be filled
+/// @param traj is the input trajectory
+/// @param sf_desc is the input surface
+/// @param ctf is the transform of the surface
+/// @param cfg is the intersection configuration
+/// @param external_mask_tolerance additional mask tol. given by the caller
+template <template <typename, typename, bool> class intersector_constructor_t,
+          typename mask_store_t, typename output_t, typename traj_t,
+          typename surface_t, typename transform_t, concepts::scalar scalar_t>
+DETRAY_HOST_DEVICE inline void intersect_surface(
+    const mask_store_t &mask_store, output_t &found_intersections,
+    const traj_t &traj, const surface_t &sf_desc, const transform_t &ctf,
+    const intersection::config &cfg, const scalar_t external_mask_tolerance) {
+  using intersection_t = std::remove_extent_t<output_t>;
+  using registry_t = intersect_surface_registry_t<intersector_constructor_t,
+                                                  mask_store_t, intersection_t>;
+
+  // We could, naively, visit the mask store directly, but the intersection
+  // initializer does a lot of non-mask-dependent work. Compiling it once per
+  // mask generates a lot of unwanted code. Instead, we visit the intersectors
+  // that match each of the masks so we can generate the intersection code
+  // once for every intersector, rather than once for every mask.
+  types::visit<registry_t,
+               intersect_surface_per_intersector<
+                   intersector_constructor_t, intersection_t::contains_pos()>>(
+      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj, ctf,
+      cfg, external_mask_tolerance);
+}
+
 /// Intersect a surface with a trajectory and add all valid intersections to
 /// the intersection container
 ///
@@ -252,32 +312,20 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
     const typename transform_container_t::context_type &ctx,
     const intersection::config &cfg,
     const scalar_t external_mask_tolerance = 0.f) {
-  using masks_t = typename mask_store_t::value_types;
-  static constexpr bool contains_pos =
-      is_container_t::value_type::contains_pos();
-  using registry_t = types::mapped_registry<
-      masks_t, select_intersector<intersector_constructor_t, contains_pos>>;
+  using intersection_t = typename is_container_t::value_type;
+  using output_t = intersect_surface_output_t<intersector_constructor_t,
+                                              mask_store_t, intersection_t>;
+  constexpr std::size_t max_n_results =
+      intersect_surface_max_n_results<intersector_constructor_t, mask_store_t,
+                                      intersection_t>;
 
   const auto &ctf = contextual_transforms.at(sf_desc.transform(), ctx);
 
-  static constexpr auto max_n_results =
-      max_intersections_for_intersectors<typename registry_t::type_list>::value;
-
-  using single_output_t = typename is_container_t::value_type;
-  using output_t = std::conditional_t<(max_n_results == 1), single_output_t,
-                                      single_output_t[max_n_results]>;
-
   output_t found_intersections{};
 
-  // We could, naively, visit the mask store directly, but the intersection
-  // initializer does a lot of non-mask-dependent work. Compiling it once per
-  // mask generates a lot of unwanted code. Instead, we visit the intersectors
-  // that match each of the masks so we can generate the intersection code
-  // once for every intersector, rather than once for every mask.
-  types::visit<registry_t, intersection_initialize_surface_per_intersector<
-                               intersector_constructor_t, contains_pos>>(
-      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj, ctf,
-      cfg, external_mask_tolerance);
+  intersect_surface<intersector_constructor_t>(mask_store, found_intersections,
+                                               traj, sf_desc, ctf, cfg,
+                                               external_mask_tolerance);
 
   if constexpr (concepts::subscriptable<output_t>) {
     for (std::size_t i = 0u; i < max_n_results; ++i) {
@@ -292,102 +340,52 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
   }
 }
 
-/// A functor to update the closest intersection between the trajectory and
-/// surface
-template <template <typename, typename, bool> class intersector_t>
-struct intersection_update {
-  /// Operator function to update the intersection
-  ///
-  /// @tparam mask_group_t is the input mask group type found by variadic
-  /// unrolling
-  /// @tparam traj_t is the input trajectory type (e.g. ray or helix)
-  /// @tparam surface_t is the input surface type
-  /// @tparam transform_container_t is the input transform store type
-  ///
-  /// @param mask_group is the input mask group
-  /// @param mask_range is the range of masks in the group that belong to the
-  ///                   surface
-  /// @param traj is the input trajectory
-  /// @param surface is the input surface
-  /// @param contextual_transforms is the input transform container
-  /// @param mask_tolerance is the tolerance for mask size
-  /// @param overstep_tol negative cutoff for the path
-  ///
-  /// @return the intersection
-  template <typename mask_group_t, typename mask_range_t, typename traj_t,
-            typename intersection_t, typename transform_container_t,
-            concepts::scalar scalar_t>
-  DETRAY_HOST_DEVICE inline bool operator()(
-      const mask_group_t &mask_group, const mask_range_t &mask_range,
-      const traj_t &traj, intersection_t &sfi,
-      const transform_container_t &contextual_transforms,
-      const typename transform_container_t::context_type &ctx,
-      const intersection::config &cfg,
-      const scalar_t external_mask_tolerance = 0.f) const {
-    using mask_t = typename mask_group_t::value_type;
-    using shape_t = typename mask_t::shape;
-    using algebra_t = typename mask_t::algebra_type;
+/// Update the intersection @param sfi of a surface with a trajectory. Only the
+/// closest solution is kept.
+///
+/// @tparam intersector_t is the intersector template to be used
+/// @tparam mask_store_t is the mask store type
+/// @tparam traj_t is the input trajectory type (e.g. ray or helix)
+/// @tparam intersection_t is the intersection type
+/// @tparam transform_container_t is the input transform store type
+///
+/// @param mask_store is the mask store that holds the surface masks
+/// @param traj is the input trajectory
+/// @param sfi is the intersection to be updated (holds the surface)
+/// @param contextual_transforms is the input transform container
+/// @param ctx is the geometry context
+/// @param cfg is the intersection configuration
+/// @param external_mask_tolerance additional mask tol. given by the caller
+///
+/// @returns true if the trajectory (probably) hits the surface
+template <template <typename, typename, bool> class intersector_constructor_t,
+          typename mask_store_t, typename traj_t, typename intersection_t,
+          typename transform_container_t, concepts::scalar scalar_t>
+DETRAY_HOST_DEVICE inline bool intersection_update_surface(
+    const mask_store_t &mask_store, const traj_t &traj, intersection_t &sfi,
+    const transform_container_t &contextual_transforms,
+    const typename transform_container_t::context_type &ctx,
+    const intersection::config &cfg,
+    const scalar_t external_mask_tolerance = 0.f) {
+  using output_t = intersect_surface_output_t<intersector_constructor_t,
+                                              mask_store_t, intersection_t>;
 
-    // Find the point of intersection with the underlying geometry
-    const auto &ctf = contextual_transforms.at(sfi.surface().transform(), ctx);
+  const auto &sf_desc = sfi.surface();
+  const auto &ctf = contextual_transforms.at(sf_desc.transform(), ctx);
 
-    constexpr intersector_t<shape_t, algebra_t, intersection_t::contains_pos()>
-        intersector{};
-    constexpr std::uint8_t n_sol{decltype(intersector)::n_solutions};
+  // Start from the current intersection, so that it is left untouched if the
+  // surface is not intersected at all
+  output_t found_intersections{};
+  at_solution(found_intersections, 0u) = sfi;
 
-    typename decltype(intersector)::result_type result{};
+  intersect_surface<intersector_constructor_t>(mask_store, found_intersections,
+                                               traj, sf_desc, ctf, cfg,
+                                               external_mask_tolerance);
 
-    if constexpr (concepts::cylindrical<mask_t>) {
-      dindex mask_idx{detail::invalid_value<dindex>()};
-      if constexpr (concepts::interval<mask_range_t>) {
-        mask_idx = mask_range.lower();
-      } else {
-        mask_idx = mask_range;
-      }
-      assert(mask_idx < mask_group.size());
+  // Only the closest solution is kept
+  sfi = at_solution(found_intersections, 0u);
 
-      result = intersector.point_of_intersection(
-          traj, ctf, mask_group[mask_idx], cfg.overstep_tolerance);
-    } else {
-      result =
-          intersector.point_of_intersection(traj, ctf, cfg.overstep_tolerance);
-    }
-
-    // Check if any valid solutions were found
-    if constexpr (n_sol > 1) {
-      bool found_any{false};
-      for (const auto &ip : result) {
-        if (ip.is_valid()) {
-          found_any = true;
-        }
-      }
-      if (!found_any) [[unlikely]] {
-        return false;
-      }
-    } else {
-      if (!result.is_valid()) [[unlikely]] {
-        return false;
-      }
-    }
-
-    // Run over the masks that belong to the surface
-    for (const auto &mask : detray::ranges::subrange(mask_group, mask_range)) {
-      // Build the resulting intersecion(s) from the intersection point
-      if constexpr (n_sol > 1) {
-        resolve_mask(sfi, traj, result[0], sfi.surface(), mask, ctf, cfg,
-                     external_mask_tolerance);
-      } else {
-        resolve_mask(sfi, traj, result, sfi.surface(), mask, ctf, cfg,
-                     external_mask_tolerance);
-      }
-
-      if (sfi.is_probably_inside()) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-};
+  return sfi.is_probably_inside();
+}
 
 }  // namespace detray::detail
