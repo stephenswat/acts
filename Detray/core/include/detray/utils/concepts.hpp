@@ -56,4 +56,8 @@ concept random_access_incrementable = requires(T i, const T j, int n) {
   { i -= n } -> std::same_as<T &>;
   { j - n } -> std::same_as<T>;
 };
+
+/// Concept that checks whether a type is subscriptable
+template <class T>
+concept subscriptable = requires(const T &c) { c[0]; };
 }  // namespace detray::concepts

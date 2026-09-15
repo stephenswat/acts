@@ -17,6 +17,7 @@
 #include "detray/navigation/intersection/intersection.hpp"
 #include "detray/navigation/intersection/intersection_config.hpp"
 #include "detray/tracks/ray.hpp"
+#include "detray/utils/concepts.hpp"
 #include "detray/utils/ranges.hpp"
 #include "detray/utils/type_registry.hpp"
 
@@ -90,7 +91,7 @@ struct intersection_initialize {
     constexpr std::uint8_t n_sol{decltype(intersector)::n_solutions};
 
     for (std::size_t i = 0u; i < n_sol; ++i) {
-      if constexpr (n_sol > 1) {
+      if constexpr (concepts::subscriptable<intersection_result_t>) {
         if (!intersections[i].is_valid()) [[unlikely]] {
           continue;
         }
@@ -104,15 +105,25 @@ struct intersection_initialize {
       for (const auto &mask :
            detray::ranges::subrange(mask_group, mask_range)) {
         // Build the resulting intersection(s) from the intersection point
-        if constexpr (n_sol > 1) {
-          resolve_mask(is_container[i], traj, intersections[i], sf_desc, mask,
-                       ctf, cfg, external_mask_tolerance);
+        if constexpr (concepts::subscriptable<is_container_t>) {
+          if constexpr (concepts::subscriptable<intersection_result_t>) {
+            resolve_mask(is_container[i], traj, intersections[i], sf_desc, mask,
+                         ctf, cfg, external_mask_tolerance);
+          } else {
+            resolve_mask(is_container[i], traj, intersections, sf_desc, mask,
+                         ctf, cfg, external_mask_tolerance);
+          }
           if (is_container[i].is_probably_inside()) {
             break;
           }
         } else {
-          resolve_mask(is_container, traj, intersections, sf_desc, mask, ctf,
-                       cfg, external_mask_tolerance);
+          if constexpr (concepts::subscriptable<intersection_result_t>) {
+            resolve_mask(is_container, traj, intersections[i], sf_desc, mask,
+                         ctf, cfg, external_mask_tolerance);
+          } else {
+            resolve_mask(is_container, traj, intersections, sf_desc, mask, ctf,
+                         cfg, external_mask_tolerance);
+          }
           if (is_container.is_probably_inside()) {
             break;
           }
@@ -202,12 +213,6 @@ struct intersection_initialize_surface_per_intersector {
       }
     }
 
-    using single_output_t = typename is_container_t::value_type;
-    using output_t = std::conditional_t<(n_sol == 1), single_output_t,
-                                        single_output_t[n_sol]>;
-
-    output_t found_intersections{};
-
     // Keep in mind that this function body is called once for every
     // intersector type, not for every mask. What we will do now is call a
     // different per-mask function object for every mask type.
@@ -217,47 +222,8 @@ struct intersection_initialize_surface_per_intersector {
     // here knows what the intersector is.
     mask_store.template visit<intersection_initialize_surface_per_mask<
         intersector_constructor_t, contains_pos_v, intersector_t>>(
-        sf_desc.mask(), found_intersections, traj, _sf_desc, result, ctf, cfg,
+        sf_desc.mask(), is_container, traj, _sf_desc, result, ctf, cfg,
         external_mask_tolerance);
-
-    if constexpr (n_sol > 1) {
-      for (std::size_t i = 0u; i < n_sol; ++i) {
-        if (found_intersections[i].is_probably_inside()) {
-          insert_sorted(found_intersections[i], is_container);
-        }
-      }
-    } else {
-      if (found_intersections.is_probably_inside()) {
-        insert_sorted(found_intersections, is_container);
-      }
-    }
-  }
-
-  template <typename intersection_t, typename... allocator_t>
-  DETRAY_HOST_DEVICE void insert_sorted(
-      const intersection_t &sfi,
-      std::vector<intersection_t, allocator_t...> &intersections) const {
-    auto itr_pos =
-        detray::upper_bound(intersections.cbegin(), intersections.cend(), sfi);
-
-    intersections.insert(itr_pos, sfi);
-  }
-
-  /// Specialization for the navigation state cache
-  template <typename nav_state_t>
-  DETRAY_HOST_DEVICE void insert_sorted(
-      const typename nav_state_t::value_type &sfi,
-      nav_state_t &intersections) const {
-    auto itr_pos{intersections.cbegin()};
-
-    // For just two candidates int the cache, the navigation state keeps
-    // the first as the previously visited candidate -> no sorting needed
-    if constexpr (nav_state_t::capacity() > 2u) {
-      itr_pos = detray::upper_bound(intersections.cbegin(),
-                                    intersections.cend(), sfi);
-    }
-
-    intersections.insert(itr_pos, sfi);
   }
 };
 
@@ -268,6 +234,32 @@ template <typename... Ts>
 struct max_intersections_for_intersectors<types::list<Ts...>> {
   static constexpr auto value = std::max({Ts::n_solutions...});
 };
+
+template <typename intersection_t, typename... allocator_t>
+DETRAY_HOST_DEVICE void insert_sorted(
+    const intersection_t &sfi,
+    std::vector<intersection_t, allocator_t...> &intersections) {
+  auto itr_pos =
+      detray::upper_bound(intersections.cbegin(), intersections.cend(), sfi);
+
+  intersections.insert(itr_pos, sfi);
+}
+
+/// Specialization for the navigation state cache
+template <typename nav_state_t>
+DETRAY_HOST_DEVICE void insert_sorted(
+    const typename nav_state_t::value_type &sfi, nav_state_t &intersections) {
+  auto itr_pos{intersections.cbegin()};
+
+  // For just two candidates int the cache, the navigation state keeps
+  // the first as the previously visited candidate -> no sorting needed
+  if constexpr (nav_state_t::capacity() > 2u) {
+    itr_pos =
+        detray::upper_bound(intersections.cbegin(), intersections.cend(), sfi);
+  }
+
+  intersections.insert(itr_pos, sfi);
+}
 
 /// Intersect a surface with a trajectory and add all valid intersections to
 /// the intersection container
@@ -306,6 +298,15 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
 
   const auto &ctf = contextual_transforms.at(sf_desc.transform(), ctx);
 
+  static constexpr auto max_n_results =
+      max_intersections_for_intersectors<typename registry_t::type_list>::value;
+
+  using single_output_t = typename is_container_t::value_type;
+  using output_t = std::conditional_t<(max_n_results == 1), single_output_t,
+                                      single_output_t[max_n_results]>;
+
+  output_t found_intersections{};
+
   // We could, naively, visit the mask store directly, but the intersection
   // initializer does a lot of non-mask-dependent work. Compiling it once per
   // mask generates a lot of unwanted code. Instead, we visit the intersectors
@@ -313,8 +314,20 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
   // once for every intersector, rather than once for every mask.
   types::visit<registry_t, intersection_initialize_surface_per_intersector<
                                intersector_constructor_t, contains_pos>>(
-      sf_desc.mask().id(), mask_store, sf_desc, is_container, traj, sf_desc,
-      ctf, cfg, external_mask_tolerance);
+      sf_desc.mask().id(), mask_store, sf_desc, found_intersections, traj,
+      sf_desc, ctf, cfg, external_mask_tolerance);
+
+  if constexpr (concepts::subscriptable<output_t>) {
+    for (std::size_t i = 0u; i < max_n_results; ++i) {
+      if (found_intersections[i].is_probably_inside()) {
+        insert_sorted(found_intersections[i], is_container);
+      }
+    }
+  } else {
+    if (found_intersections.is_probably_inside()) {
+      insert_sorted(found_intersections, is_container);
+    }
+  }
 }
 
 /// A functor to update the closest intersection between the trajectory and
