@@ -49,6 +49,26 @@ struct intersect_surface_get_radius {
   };
 };
 
+/// @returns the intersection(s) of the trajectory with the unbounded surface
+template <typename intersector_t, typename mask_store_t, typename mask_range_t,
+          typename traj_t, typename transform_t, concepts::scalar scalar_t>
+DETRAY_HOST_DEVICE constexpr typename intersector_t::result_type
+intersect_unbounded(const intersector_t &intersector,
+                    const mask_store_t &mask_store,
+                    const typename mask_store_t::ids mask_id,
+                    const mask_range_t mask_range, const traj_t &traj,
+                    const transform_t &ctf, const scalar_t overstep_tol) {
+  if constexpr (concepts::cylindrical_frame<
+                    typename intersector_t::frame_type>) {
+    // The cylinder intersectors need the radius of the mask
+    const auto radius = mask_store.template visit<intersect_surface_get_radius>(
+        mask_id, mask_range);
+    return intersector.point_of_intersection(traj, ctf, radius, overstep_tol);
+  } else {
+    return intersector.point_of_intersection(traj, ctf, overstep_tol);
+  }
+}
+
 /// @returns the @param i -th element of @param t, or @param t itself if it
 /// holds a single element
 template <typename T>
@@ -119,19 +139,9 @@ struct intersect_surface_per_intersector {
       const traj_t &traj, const transform_t &ctf,
       const intersection::config &cfg,
       const scalar_t external_mask_tolerance = 0.f) const {
-    typename intersector_t::result_type result{};
-
-    if constexpr (concepts::cylindrical_frame<
-                      typename intersector_t::frame_type>) {
-      const auto radius =
-          mask_store.template visit<intersect_surface_get_radius>(mask_id,
-                                                                  mask_range);
-      result = intersector.point_of_intersection(traj, ctf, radius,
-                                                 cfg.overstep_tolerance);
-    } else {
-      result =
-          intersector.point_of_intersection(traj, ctf, cfg.overstep_tolerance);
-    }
+    const auto result =
+        intersect_unbounded(intersector, mask_store, mask_id, mask_range, traj,
+                            ctf, cfg.overstep_tolerance);
 
     constexpr std::uint8_t n_sol{intersector_t::n_solutions};
 
@@ -184,7 +194,7 @@ struct intersect_surface_per_intersector {
           mask_id, mask_range, check, traj, ip, ctf, tol);
 
       // Mask independent part: fill the intersection
-      finalize_intersection(is, ip, sf_desc, check);
+      finalize_intersection(is, ip, check);
     }
   }
 };
@@ -336,14 +346,18 @@ DETRAY_HOST_DEVICE inline void intersection_initialize_surface(
                                                traj, sf_desc, ctf, cfg,
                                                external_mask_tolerance);
 
+  // The surface link is set once here, so that it is not carried through
+  // the intersector dispatch
   if constexpr (concepts::subscriptable<output_t>) {
     for (std::size_t i = 0u; i < max_n_results; ++i) {
       if (found_intersections[i].is_probably_inside()) {
+        found_intersections[i].set_surface(sf_desc);
         insert_sorted(found_intersections[i], is_container);
       }
     }
   } else {
     if (found_intersections.is_probably_inside()) {
+      found_intersections.set_surface(sf_desc);
       insert_sorted(found_intersections, is_container);
     }
   }

@@ -312,18 +312,19 @@ check_intersection_mask(
 /// @brief Mask independent part of the mask resolution after the mask check:
 /// fill the intersection
 ///
+/// @note The surface link is not set here, so that it does not have to be
+/// carried through the mask resolution. The caller sets it.
+///
 /// @param [out] is the surface intersection
 /// @param [in] ip the intersection point
-/// @param [in] sf_desc the surface descriptor
 /// @param [in] check the mask check result
 template <typename intersection_t, concepts::algebra algebra_t,
-          concepts::point point_t, typename surface_descr_t,
-          typename mask_check_t>
+          concepts::point point_t, typename mask_check_t>
 DETRAY_HOST_DEVICE constexpr void finalize_intersection(
     intersection_t &is,
     const intersection_point<algebra_t, point_t, intersection::contains_pos>
         &ip,
-    const surface_descr_t sf_desc, const mask_check_t &check) {
+    const mask_check_t &check) {
   if constexpr (intersection_t::contains_pos()) {
     is.set_local(check.local);
   }
@@ -333,7 +334,6 @@ DETRAY_HOST_DEVICE constexpr void finalize_intersection(
   is.set_status_if(intersection::status::e_inside, check.inside);
 
   is.set_path(ip.path);
-  is.set_surface(sf_desc);
   is.set_direction(!math::signbit(ip.path));
   is.set_volume_link(check.volume_link);
 }
@@ -369,7 +369,8 @@ DETRAY_HOST_DEVICE constexpr void resolve_mask(
   const auto check = check_intersection_mask<intersection_t::contains_pos()>(
       traj, ip, mask, trf, tol);
 
-  finalize_intersection(is, ip, sf_desc, check);
+  finalize_intersection(is, ip, check);
+  is.set_surface(sf_desc);
 }
 
 }  // namespace detray
