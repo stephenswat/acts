@@ -290,27 +290,27 @@ struct enumerate : public enumerate_view<range_itr_t, incr_t> {
 };
 
 // deduction guides
-DETRAY_HOST_DEVICE enumerate() -> enumerate<
+enumerate() -> enumerate<
     detray::ranges::const_iterator_t<detray::ranges::views::empty<int>>,
     dindex>;
 
-DETRAY_HOST_DEVICE enumerate(dindex start) -> enumerate<
+enumerate(dindex start) -> enumerate<
     detray::ranges::const_iterator_t<detray::ranges::views::empty<int>>,
     dindex>;
 
 template <detray::ranges::range range_t>
-DETRAY_HOST_DEVICE enumerate(range_t &&rng)
+enumerate(range_t &&rng)
     -> enumerate<detray::ranges::const_iterator_t<std::decay_t<range_t>>,
                  dindex>;
 
 template <detray::ranges::range range_t, typename volume_t,
           typename = typename std::remove_reference_t<volume_t>::volume_def>
-DETRAY_HOST_DEVICE enumerate(range_t &&range, const volume_t &vol)
+enumerate(range_t &&range, const volume_t &vol)
     -> enumerate<detray::ranges::const_iterator_t<std::decay_t<range_t>>,
                  dindex>;
 
 template <detray::ranges::range range_t>
-DETRAY_HOST_DEVICE enumerate(range_t &&rng, dindex start)
+enumerate(range_t &&rng, dindex start)
     -> enumerate<detray::ranges::const_iterator_t<std::decay_t<range_t>>,
                  dindex>;
 

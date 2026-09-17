@@ -145,26 +145,25 @@ struct subrange : public detail::subrange_view<range_t> {
 };
 
 // deduction guides
-DETRAY_HOST_DEVICE subrange()
-    -> subrange<detray::ranges::views::empty<int>, dindex_range>;
+subrange() -> subrange<detray::ranges::views::empty<int>, dindex_range>;
 
 template <concepts::index index_t>
-DETRAY_HOST_DEVICE subrange(index_t start, index_t end)
+subrange(index_t start, index_t end)
     -> subrange<detray::ranges::views::empty<int>, darray<index_t, 2>>;
 
 template <detray::ranges::range deduced_range_t>
-DETRAY_HOST_DEVICE subrange(deduced_range_t &&range)
+subrange(deduced_range_t &&range)
     -> subrange<std::remove_reference_t<deduced_range_t>, bool>;
 
 template <detray::ranges::range deduced_range_t, concepts::index index_t>
   requires std::convertible_to<
       index_t, detray::ranges::range_difference_t<deduced_range_t>>
-DETRAY_HOST_DEVICE subrange(deduced_range_t &&range, index_t pos)
+subrange(deduced_range_t &&range, index_t pos)
     -> subrange<std::remove_reference_t<deduced_range_t>, index_t>;
 
 template <detray::ranges::range deduced_range_t,
           concepts::interval index_range_t>
-DETRAY_HOST_DEVICE subrange(deduced_range_t &&range, index_range_t &&pos)
+subrange(deduced_range_t &&range, index_range_t &&pos)
     -> subrange<std::remove_reference_t<deduced_range_t>,
                 std::remove_cvref_t<index_range_t>>;
 

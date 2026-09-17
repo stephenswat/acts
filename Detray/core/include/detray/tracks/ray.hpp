@@ -99,6 +99,6 @@ class ray {
 
 // Deduce the type of algebra from the track
 template <typename A>
-DETRAY_HOST_DEVICE ray(const free_track_parameters<A> &) -> ray<A>;
+ray(const free_track_parameters<A> &) -> ray<A>;
 
 }  // namespace detray::detail

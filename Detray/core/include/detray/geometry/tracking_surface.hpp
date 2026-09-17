@@ -118,20 +118,20 @@ class tracking_surface : public geometry::surface<const det_t> {
 };
 
 template <concepts::detector detector_t, typename descr_t>
-DETRAY_HOST_DEVICE tracking_surface(const detector_t &, const descr_t &)
+tracking_surface(const detector_t &, const descr_t &)
     -> tracking_surface<detector_t>;
 
 template <concepts::detector detector_t>
-DETRAY_HOST_DEVICE tracking_surface(const detector_t &,
+tracking_surface(const detector_t &,
                                     const geometry::identifier)
     -> tracking_surface<detector_t>;
 
 template <concepts::detector detector_t>
-DETRAY_HOST_DEVICE tracking_surface(const geometry::surface<detector_t>)
+tracking_surface(const geometry::surface<detector_t>)
     -> tracking_surface<detector_t>;
 
 template <concepts::detector detector_t>
-DETRAY_HOST_DEVICE tracking_surface(const geometry::surface<const detector_t>)
+tracking_surface(const geometry::surface<const detector_t>)
     -> tracking_surface<detector_t>;
 
 }  // namespace detray
