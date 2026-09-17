@@ -14,6 +14,10 @@
 #include "traccc/definitions/math.hpp"
 #include "traccc/definitions/qualifiers.hpp"
 
+// System include(s).
+#include <cassert>
+#include <limits>
+
 namespace traccc {
 
 /* Logarithm of gamma function */
@@ -79,7 +83,15 @@ struct log_gamma {
   }
 
   static constexpr scalar_t kMAXLGM = static_cast<scalar_t>(2.556348e305);
-  static constexpr scalar_t kMACHEP = 1.11022302462515654042363166809e-16f;
+  /// Convergence tolerance for the series and continued fraction expansions.
+  ///
+  /// This has to match the precision of @c scalar_t: with a tolerance below
+  /// the machine epsilon, the loops below can only terminate if consecutive
+  /// iterations produce bit-identical results, which is not guaranteed when
+  /// approximate (fast-math) division is used.
+  static constexpr scalar_t kMACHEP = std::numeric_limits<scalar_t>::epsilon();
+  /// Hard upper limit on the number of iterations, to guarantee termination.
+  static constexpr unsigned int kMaxIterations = 1000u;
   static constexpr scalar_t kMAXLOG = 709.782712893383973096206318587f;
   static constexpr scalar_t kBig = 4.503599627370496e15f;
   static constexpr scalar_t kBiginv = 2.22044604925031308085e-16f;
@@ -205,11 +217,13 @@ TRACCC_HOST_DEVICE inline scalar_t igam_impl(const scalar_t a,
   c = 1.0f;
   ans = 1.0f;
 
+  unsigned int n_iter = 0u;
   do {
     r += 1.0f;
     c *= x / r;
     ans += c;
-  } while (c / ans > log_gamma<scalar_t>::kMACHEP);
+  } while (c / ans > log_gamma<scalar_t>::kMACHEP &&
+           ++n_iter < log_gamma<scalar_t>::kMaxIterations);
 
   return (ans * ax / a);
 }
@@ -255,6 +269,7 @@ TRACCC_HOST_DEVICE inline scalar_t igamc_impl(const scalar_t a,
   qkm1 = z * x;
   ans = pkm1 / qkm1;
 
+  unsigned int n_iter = 0u;
   do {
     c += 1.0f;
     y += 1.0f;
@@ -279,7 +294,8 @@ TRACCC_HOST_DEVICE inline scalar_t igamc_impl(const scalar_t a,
       qkm2 *= log_gamma<scalar_t>::kBiginv;
       qkm1 *= log_gamma<scalar_t>::kBiginv;
     }
-  } while (t > log_gamma<scalar_t>::kMACHEP);
+  } while (t > log_gamma<scalar_t>::kMACHEP &&
+           ++n_iter < log_gamma<scalar_t>::kMaxIterations);
 
   return (ans * ax);
 }
