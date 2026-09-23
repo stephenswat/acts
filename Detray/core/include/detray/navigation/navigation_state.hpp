@@ -18,6 +18,7 @@
 #include "detray/geometry/identifier.hpp"
 #include "detray/geometry/tracking_surface.hpp"
 #include "detray/geometry/tracking_volume.hpp"
+#include "detray/navigation/detail/candidate_order.hpp"
 #include "detray/navigation/detail/intersection_kernel.hpp"
 #include "detray/navigation/detail/print_state.hpp"
 #include "detray/navigation/intersection/intersection.hpp"
@@ -99,7 +100,8 @@ class base_state : public detray::ranges::view_interface<
 
   // Result of a geometry object evaluation
   using candidate_t = intersection_t;
-  using candidate_cache_t = darray<candidate_t, k_cache_capacity>;
+  using candidate_cache_t =
+      detail::ordered_candidate_cache<candidate_t, k_cache_capacity>;
   using candidate_itr_t = typename candidate_cache_t::iterator;
   using candidate_const_itr_t = typename candidate_cache_t::const_iterator;
   using dist_t = std::int_least8_t;

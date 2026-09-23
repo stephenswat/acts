@@ -139,6 +139,12 @@ TRACCC_HOST_DEVICE inline void remove_duplicates(
     max_tid++;
   }
 
+  // A track without another candidate on its last measurement cannot be
+  // removed. Avoid evaluating its fit probability.
+  if (min_tid == max_tid) {
+    return;
+  }
+
   /*
    * Throughout this function, we refer to "this" as the track uniquely
    * belonging to the executing thread and "that" as any other track
@@ -158,8 +164,10 @@ TRACCC_HOST_DEVICE inline void remove_duplicates(
     return;
   }
 
-  const scalar prob_this =
-      prob(Lthisbase.chi2_sum, static_cast<scalar>(Lthisbase.ndf_sum - 5));
+  // Fit probabilities are only needed when two measurement histories match.
+  // Cache this track's probability after the first such comparison.
+  scalar prob_this = 0.f;
+  bool have_prob_this = false;
 
   /*
    * We now compare the current track with every other track that has the
@@ -188,8 +196,9 @@ TRACCC_HOST_DEVICE inline void remove_duplicates(
       continue;
     }
 
-    const scalar prob_that =
-        prob(Lthat.chi2_sum, static_cast<scalar>(Lthat.ndf_sum - 5));
+    // Preserve the fit quality before walking backwards through the links.
+    const scalar that_chi2 = Lthat.chi2_sum;
+    const unsigned int that_ndf = Lthat.ndf_sum;
 
     /*
      * This loop is the main workhorse of the algorithm, comparing the
@@ -259,6 +268,17 @@ TRACCC_HOST_DEVICE inline void remove_duplicates(
      * p-value or, if the p-value is equal, if the other track has a lower
      * identifier (this should be a very uncommon tie-breaker).
      */
+    if (!this_is_dominated) {
+      continue;
+    }
+
+    if (!have_prob_this) {
+      prob_this =
+          prob(Lthisbase.chi2_sum, static_cast<scalar>(Lthisbase.ndf_sum - 5));
+      have_prob_this = true;
+    }
+    const scalar prob_that =
+        prob(that_chi2, static_cast<scalar>(that_ndf - 5));
     if (prob_this != prob_that) {
       this_is_dominated &= prob_that >= prob_this;
     } else {

@@ -43,12 +43,15 @@ using ckf_actor_chain_t = detray::actor_chain<
 
 /// Propagator type used in the Combinatorial Kalman Filter (CKF)
 ///
+/// Keep four navigation candidates to reduce per-track local storage in the
+/// CUDA propagation kernel. The navigator refills the cache when needed.
+///
 /// @tparam detector_t The detector type to use
 ///
 template <detray::concepts::detector detector_t, typename bfield_t>
-using ckf_propagator_t =
-    detray::propagator<ckf_stepper_t<bfield_t>,
-                       detray::caching_navigator<std::add_const_t<detector_t>>,
-                       ckf_actor_chain_t>;
+using ckf_propagator_t = detray::propagator<
+    ckf_stepper_t<bfield_t>,
+    detray::caching_navigator<std::add_const_t<detector_t>, 4u>,
+    ckf_actor_chain_t>;
 
 }  // namespace traccc::details

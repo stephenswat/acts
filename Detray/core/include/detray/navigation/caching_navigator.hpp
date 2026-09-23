@@ -204,13 +204,8 @@ class caching_navigator
         idx = idx > shift_begin ? shift_begin : idx;
       }
 
-      for (dist_t i = shift_begin; i >= idx; --i) {
-        const auto j{static_cast<std::size_t>(i)};
-        this->candidates()[j + 1u] = this->candidates()[j];
-      }
-
-      // Now insert the new candidate and update candidate range
-      this->candidates()[static_cast<std::size_t>(idx)] = new_candidate;
+      // Move only the cache permutation, then overwrite the evicted slot.
+      this->candidates().insert_at(static_cast<std::size_t>(idx), new_candidate);
       this->last_index(math::min(static_cast<dist_t>(this->last_index() + 1),
                                  static_cast<dist_t>(k_cache_capacity - 1)));
 

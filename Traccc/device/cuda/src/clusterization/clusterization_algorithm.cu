@@ -33,7 +33,14 @@ clusterization_algorithm::clusterization_algorithm(
     const stream_wrapper& str, const config_type& config,
     std::unique_ptr<const Logger> logger)
     : device::clusterization_algorithm(mr, copy, config, std::move(logger)),
-      cuda::algorithm_base(str) {}
+      cuda::algorithm_base(str) {
+  // CCL also accesses per-thread adjacency arrays in local memory. Leave
+  // room for L1 caching instead of maximizing shared-memory occupancy.
+  // This is a preference: CUDA can increase the carveout when required by
+  // the configured partition size.
+  TRACCC_CUDA_ERROR_CHECK(cudaFuncSetAttribute(
+      kernels::ccl_kernel, cudaFuncAttributePreferredSharedMemoryCarveout, 50));
+}
 
 bool clusterization_algorithm::input_is_contiguous(
     const edm::silicon_cell_collection::const_view& cells) const {
