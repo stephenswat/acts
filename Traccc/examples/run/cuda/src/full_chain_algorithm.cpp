@@ -53,12 +53,9 @@ full_chain_algorithm::full_chain_algorithm(
     await_strategy await_mode)
     : messaging(logger->clone()),
       m_host_mr(host_mr),
-      m_pinned_host_mr(),
-      m_cached_pinned_host_mr(m_pinned_host_mr),
+      m_mrs(std::make_shared<memory_resources>()),
       m_vecmem_stream{},
       m_stream{m_vecmem_stream.stream()},
-      m_device_mr(),
-      m_cached_device_mr(m_device_mr),
       m_copy(m_stream.cudaStream()),
       m_await_function(get_await_function(await_mode)),
       m_field_vec{0.f, 0.f, finder_config.bFieldInZ},
@@ -80,37 +77,41 @@ full_chain_algorithm::full_chain_algorithm(
             }
             return sizes;
           }(),
-          m_device_mr, &m_host_mr, vecmem::data::buffer_type::resizable),
+          m_mrs->device_mr, &m_host_mr, vecmem::data::buffer_type::resizable),
       m_device_det_cond(
           static_cast<detector_conditions_description::buffer::size_type>(
               m_det_cond.get().size()),
-          m_device_mr),
+          m_mrs->device_mr),
       m_detector(detector),
-      m_clusterization({m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                       m_stream, clustering_config,
-                       logger->cloneWithSuffix("ClusteringAlg"),
-                       m_await_function),
-      m_measurement_sorting({m_cached_device_mr, &m_cached_pinned_host_mr},
-                            m_copy, m_stream,
-                            logger->cloneWithSuffix("MeasSortingAlg")),
+      m_clusterization(
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, clustering_config),
+      m_measurement_sorting(
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("MeasSortingAlg")),
       m_spacepoint_formation(
-          {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
-          logger->cloneWithSuffix("SpFormationAlg"), m_await_function),
-      m_seeding(finder_config, grid_config, filter_config,
-                {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                m_stream, logger->cloneWithSuffix("SeedingAlg"),
-                m_await_function),
-      m_gbts_seeding(gbts_config,
-                     {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                     m_stream, logger->cloneWithSuffix("GbtsAlg")),
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("SpFormationAlg")),
+      m_seeding(
+          finder_config, grid_config, filter_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("SeedingAlg")),
+      m_gbts_seeding(
+          gbts_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("GbtsAlg")),
       m_track_parameter_estimation(
           track_params_estimation_config,
-          {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
-          logger->cloneWithSuffix("TrackParEstAlg"), m_await_function),
-      m_finding(finding_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
-                m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg")),
-      m_fitting(fitting_config, {m_cached_device_mr, &m_cached_pinned_host_mr},
-                m_copy, m_stream, logger->cloneWithSuffix("TrackFittingAlg")),
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("TrackParEstAlg")),
+      m_finding(
+          finding_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("TrackFindingAlg")),
+      m_fitting(
+          fitting_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, logger->cloneWithSuffix("TrackFittingAlg")),
       m_clustering_config(clustering_config),
       m_finder_config(finder_config),
       m_grid_config(grid_config),
@@ -134,20 +135,17 @@ full_chain_algorithm::full_chain_algorithm(
   m_copy(vecmem::get_data(m_det_descr.get()), m_device_det_descr)->wait();
   m_copy(vecmem::get_data(m_det_cond.get()), m_device_det_cond)->wait();
   if (m_detector != nullptr) {
-    m_device_detector =
-        traccc::buffer_from_host_detector(*m_detector, m_device_mr, m_copy);
+    m_device_detector = traccc::buffer_from_host_detector(
+        *m_detector, m_mrs->device_mr, m_copy);
   }
 }
 
 full_chain_algorithm::full_chain_algorithm(const full_chain_algorithm& parent)
     : messaging(parent.logger().clone()),
       m_host_mr(parent.m_host_mr),
-      m_pinned_host_mr(),
-      m_cached_pinned_host_mr(m_pinned_host_mr),
+      m_mrs(parent.m_mrs),
       m_vecmem_stream{},
       m_stream{m_vecmem_stream.stream()},
-      m_device_mr(),
-      m_cached_device_mr(m_device_mr),
       m_copy(m_stream.cudaStream()),
       m_await_function(parent.m_await_function),
       m_field_vec(parent.m_field_vec),
@@ -169,40 +167,42 @@ full_chain_algorithm::full_chain_algorithm(const full_chain_algorithm& parent)
             }
             return sizes;
           }(),
-          m_device_mr, &m_host_mr, vecmem::data::buffer_type::resizable),
+          m_mrs->device_mr, &m_host_mr, vecmem::data::buffer_type::resizable),
       m_device_det_cond(
           static_cast<detector_conditions_description::buffer::size_type>(
               m_det_cond.get().size()),
-          m_device_mr),
+          m_mrs->device_mr),
       m_detector(parent.m_detector),
-      m_clusterization({m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                       m_stream, parent.m_clustering_config,
-                       parent.logger().cloneWithSuffix("ClusteringAlg"),
-                       m_await_function),
-      m_measurement_sorting({m_cached_device_mr, &m_cached_pinned_host_mr},
-                            m_copy, m_stream,
-                            parent.logger().cloneWithSuffix("MeasSortingAlg")),
+      m_clusterization(
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.m_clustering_config),
+      m_measurement_sorting(
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("MeasSortingAlg")),
       m_spacepoint_formation(
-          {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
-          parent.logger().cloneWithSuffix("SpFormationAlg"), m_await_function),
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("SpFormationAlg")),
       m_seeding(
           parent.m_finder_config, parent.m_grid_config, parent.m_filter_config,
-          {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
-          parent.logger().cloneWithSuffix("SeedingAlg"), m_await_function),
-      m_gbts_seeding(parent.m_gbts_config,
-                     {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                     m_stream, parent.logger().cloneWithSuffix("GbtsAlg")),
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("SeedingAlg")),
+      m_gbts_seeding(
+          parent.m_gbts_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("GbtsAlg")),
       m_track_parameter_estimation(
           parent.m_track_params_estimation_config,
-          {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy, m_stream,
-          parent.logger().cloneWithSuffix("TrackParamEstAlg"),
-          m_await_function),
-      m_finding(parent.m_finding_config,
-                {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                m_stream, parent.logger().cloneWithSuffix("TrackFindingAlg")),
-      m_fitting(parent.m_fitting_config,
-                {m_cached_device_mr, &m_cached_pinned_host_mr}, m_copy,
-                m_stream, parent.logger().cloneWithSuffix("TrackFittingAlg")),
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream,
+          parent.logger().cloneWithSuffix("TrackParamEstAlg")),
+      m_finding(
+          parent.m_finding_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("TrackFindingAlg")),
+      m_fitting(
+          parent.m_fitting_config,
+          {m_mrs->synchronized_device_mr, &m_mrs->synchronized_pinned_host_mr},
+          m_copy, m_stream, parent.logger().cloneWithSuffix("TrackFittingAlg")),
       m_clustering_config(parent.m_clustering_config),
       m_finder_config(parent.m_finder_config),
       m_grid_config(parent.m_grid_config),
@@ -216,8 +216,8 @@ full_chain_algorithm::full_chain_algorithm(const full_chain_algorithm& parent)
   m_copy(vecmem::get_data(m_det_descr.get()), m_device_det_descr)->wait();
   m_copy(vecmem::get_data(m_det_cond.get()), m_device_det_cond)->wait();
   if (m_detector != nullptr) {
-    m_device_detector =
-        traccc::buffer_from_host_detector(*m_detector, m_device_mr, m_copy);
+    m_device_detector = traccc::buffer_from_host_detector(
+        *m_detector, m_mrs->device_mr, m_copy);
   }
 }
 
@@ -227,7 +227,7 @@ full_chain_algorithm::output_type full_chain_algorithm::operator()(
     const edm::silicon_cell_collection::host& cells) const {
   // Create device copy of input collections
   edm::silicon_cell_collection::buffer cells_buffer(
-      static_cast<unsigned int>(cells.size()), m_cached_device_mr);
+      static_cast<unsigned int>(cells.size()), m_mrs->synchronized_device_mr);
   m_copy(vecmem::get_data(cells), cells_buffer)->ignore();
 
   // Run the clusterization (asynchronously).
@@ -257,8 +257,8 @@ full_chain_algorithm::output_type full_chain_algorithm::operator()(
 
     // Copy a limited amount of result data back to the host.
     const auto host_tracks =
-        m_copy.to(track_candidates.tracks, m_cached_pinned_host_mr, nullptr,
-                  vecmem::copy::type::device_to_host);
+        m_copy.to(track_candidates.tracks, m_mrs->synchronized_pinned_host_mr,
+                  nullptr, vecmem::copy::type::device_to_host);
     output_type result{m_host_mr};
     vecmem::copy host_copy;
     host_copy(host_tracks, result)->wait();
@@ -281,7 +281,7 @@ bound_track_parameters_collection_types::host full_chain_algorithm::seeding(
     const edm::silicon_cell_collection::host& cells) const {
   // Create device copy of input collections
   edm::silicon_cell_collection::buffer cells_buffer(
-      static_cast<unsigned int>(cells.size()), m_cached_device_mr);
+      static_cast<unsigned int>(cells.size()), m_mrs->synchronized_device_mr);
   m_copy(vecmem::get_data(cells), cells_buffer)->ignore();
 
   // Run the clusterization (asynchronously).
@@ -306,8 +306,9 @@ bound_track_parameters_collection_types::host full_chain_algorithm::seeding(
         m_track_parameter_estimation(m_field, measurements, spacepoints, seeds);
 
     // Copy a limited amount of result data back to the host.
-    const auto host_seeds = m_copy.to(track_params, m_cached_pinned_host_mr,
-                                      vecmem::copy::type::device_to_host);
+    const auto host_seeds =
+        m_copy.to(track_params, m_mrs->synchronized_pinned_host_mr,
+                  vecmem::copy::type::device_to_host);
     bound_track_parameters_collection_types::host result{&m_host_mr};
     vecmem::copy host_copy;
     host_copy(host_seeds, result)->wait();

@@ -64,6 +64,7 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <type_traits>
 #include <vector>
 
 namespace traccc {
@@ -177,15 +178,37 @@ int throughput_mt(std::string_view description, int argc, char* argv[],
     await_mode = await_strategy::callback;
   }
 
-  // Set up the full-chain algorithm(s). One for each concurrent event slot.
+  // Set up the full-chain algorithm(s). One for each thread. If the algorithm
+  // is copyable, all further instances are copies of the first one, so that
+  // they can share resources (like memory caches) that the copy constructor
+  // of the algorithm chooses to share.
+  auto make_alg = [&]() {
+    return FULL_CHAIN_ALG{unpinned_host_mr,
+                          clustering_cfg,
+                          seedfinder_config,
+                          spacepoint_grid_config,
+                          seedfilter_config,
+                          gbts_config,
+                          track_params_estimation_config,
+                          finding_cfg,
+                          fitting_cfg,
+                          det_descr,
+                          det_cond,
+                          field,
+                          &detector,
+                          logger().clone(),
+                          seeding_gbts_opts.useGBTS,
+                          await_mode};
+  };
   std::vector<FULL_CHAIN_ALG> algs;
-  algs.reserve(threading_opts.concurrent_slots);
-  for (std::size_t i = 0; i < threading_opts.concurrent_slots; ++i) {
-    algs.push_back({unpinned_host_mr, clustering_cfg, seedfinder_config,
-                    spacepoint_grid_config, seedfilter_config, gbts_config,
-                    track_params_estimation_config, finding_cfg, fitting_cfg,
-                    det_descr, det_cond, field, &detector, logger().clone(),
-                    seeding_gbts_opts.useGBTS, await_mode});
+  algs.reserve(threading_opts.threads + 1);
+  algs.push_back(make_alg());
+  for (std::size_t i = 0; i < threading_opts.threads; ++i) {
+    if constexpr (std::is_copy_constructible_v<FULL_CHAIN_ALG>) {
+      algs.push_back(algs.front());
+    } else {
+      algs.push_back(make_alg());
+    }
   }
 
   // Set up and populate a queue with concurrent slot indices.
