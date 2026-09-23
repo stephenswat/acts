@@ -21,8 +21,10 @@
 namespace traccc::cuda {
 namespace kernels {
 
+// Keep the tiled parameter materialization from inflating register use.
+// On sm_86 this permits seven resident 64-thread blocks without spilling.
 template <detray::concepts::detector detector_t>
-__global__ void find_tracks(
+__global__ __maxnreg__(144) void find_tracks(
     const __grid_constant__ finding_config cfg,
     const __grid_constant__ typename detector_t::const_view_type det,
     const __grid_constant__ device::find_tracks_payload payload) {

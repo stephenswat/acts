@@ -169,7 +169,8 @@ void combinatorial_kalman_filter_algorithm::condense_tracks_kernel(
       out_params_per_in_param_vector.end(), params_index_vector.begin());
 
   // Establish the kernel launch parameters.
-  const unsigned int deviceThreads = warp_size() * 8;
+  // Smaller blocks distribute the tiled parameter copies across more SMs.
+  const unsigned int deviceThreads = warp_size() * 4;
   const unsigned int deviceBlocks =
       (n_threads + deviceThreads - 1) / deviceThreads;
 

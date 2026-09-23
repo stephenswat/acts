@@ -63,7 +63,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
       payload.in_params_liveness_view);
   vecmem::device_vector<candidate_link> links(payload.links_view);
   vecmem::device_vector<candidate_link> tmp_links(payload.tmp_links_view);
-  bound_track_parameters_collection_types::device tmp_params(
+  soa_bound_track_parameters_device<default_algebra> tmp_params(
       payload.tmp_params_view);
   vecmem::device_vector<unsigned int> out_params_per_in_param(
       payload.out_params_per_in_param_view);
@@ -518,8 +518,6 @@ TRACCC_HOST_DEVICE inline void find_tracks(
      * proceeds to the existing hole/tip handling below.
      */
     if (local_num_params > 0) {
-      const unsigned int p_offset =
-          in_param_id * cfg.max_num_branches_per_surface;
       const bound_track_parameters<>& in_par = in_params.at(in_param_id);
       const detray::tracking_surface sf{det, in_par.surface_link()};
       const bool is_line = traccc::detail::is_line(sf);
@@ -578,7 +576,8 @@ TRACCC_HOST_DEVICE inline void find_tracks(
            * and only here. Writing at `n_materialized` rather than at
            * `i` compacts the slice, so a failed update leaves no gap.
            */
-          const unsigned int dst = p_offset + n_materialized;
+          const unsigned int dst =
+              n_materialized * payload.n_in_params + in_param_id;
 
           tmp_links.at(dst) = {.step = payload.step,
                                .previous_candidate_idx = prev_link_idx,
@@ -590,7 +589,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
                                .chi2_sum = prev_chi2_sum + chi2,
                                .ndf_sum = prev_ndf_sum + meas.dimensions()};
 
-          tmp_params.at(dst) = filtered_params;
+          tmp_params.set(dst, filtered_params);
 
           ++n_materialized;
         } else {
@@ -606,8 +605,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
      * to the temporary link and parameter lists.
      */
     if (local_num_params == 0 && in_param_can_create_hole) {
-      const unsigned int in_offset =
-          thread_id.getGlobalThreadIdX() * cfg.max_num_branches_per_surface;
+      const unsigned int in_offset = in_param_id;
 
       tmp_links.at(in_offset) = {
           .step = payload.step,
@@ -620,7 +618,7 @@ TRACCC_HOST_DEVICE inline void find_tracks(
           .chi2_sum = prev_chi2_sum,
           .ndf_sum = prev_ndf_sum};
 
-      tmp_params.at(in_offset) = in_params.at(in_param_id);
+      tmp_params.set(in_offset, in_params.at(in_param_id));
 
       /*
        * If we created a hole, we now have a single output parameter!
